@@ -54,9 +54,7 @@ def _get_token() -> str:
             return token
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
-    raise RuntimeError(
-        "No GitHub token found. Set GITHUB_TOKEN or run `gh auth login`."
-    )
+    raise RuntimeError("No GitHub token found. Set GITHUB_TOKEN or run `gh auth login`.")
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -67,10 +65,7 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 def _parse_edge(edge: dict) -> StarredRepo:
     node = edge["node"]
-    topics = [
-        t["topic"]["name"]
-        for t in node.get("repositoryTopics", {}).get("nodes", [])
-    ]
+    topics = [t["topic"]["name"] for t in node.get("repositoryTopics", {}).get("nodes", [])]
     lang = node.get("primaryLanguage")
     return StarredRepo(
         starred_at=_parse_dt(edge["starredAt"]),

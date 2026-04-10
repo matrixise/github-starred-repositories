@@ -42,7 +42,7 @@ def _build_prompt(row: sqlite3.Row) -> str:
     pushed = row["pushed_at"][:10] if row["pushed_at"] else "unknown"
 
     readme_section = ""
-    readme_path = row["readme_path"] if "readme_path" in row.keys() else None
+    readme_path = row["readme_path"] if "readme_path" in row.keys() else None  # noqa: SIM118
     if readme_path and Path(readme_path).exists():
         content = Path(readme_path).read_text(encoding="utf-8", errors="replace")
         if len(content) > README_MAX_CHARS:

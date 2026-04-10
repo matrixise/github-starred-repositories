@@ -56,10 +56,7 @@ async def fetch_all_async(
     limits = httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency)
 
     async with httpx.AsyncClient(timeout=30, limits=limits) as client:
-        tasks = [
-            asyncio.create_task(_fetch_one(row, client, headers, semaphore))
-            for row in rows
-        ]
+        tasks = [asyncio.create_task(_fetch_one(row, client, headers, semaphore)) for row in rows]
         for coro in asyncio.as_completed(tasks):
             row, content, error = await coro
             if error is not None:

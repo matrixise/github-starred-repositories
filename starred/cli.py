@@ -22,7 +22,7 @@ from .db import (
     upsert_analysis,
     upsert_repo,
 )
-from .readme import fetch_all_async, save_readme
+from .readme import fetch_all_async
 
 load_dotenv()
 
@@ -66,10 +66,12 @@ def sync(full: bool, db_path: Path):
                 upsert_repo(conn, repo)
                 last_cursor = cursor
                 count += 1
-                console.print(f"  [green]✓[/green] {repo.name_with_owner}  [dim]{repo.starred_at.date()}[/dim]")
+                console.print(
+                    f"  [green]✓[/green] {repo.name_with_owner}  [dim]{repo.starred_at.date()}[/dim]"
+                )
         except RuntimeError as e:
             console.print(f"[red]Error:[/red] {e}")
-            raise SystemExit(1)
+            raise SystemExit(1) from None
 
         if last_cursor:
             set_meta(conn, "last_cursor", last_cursor)
@@ -83,10 +85,14 @@ def sync(full: bool, db_path: Path):
 @click.option("--concurrency", default=10, show_default=True, help="Number of parallel requests")
 @click.option("--output-dir", default=README_DIR, type=Path, show_default=True)
 @click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def fetch_readme_cmd(limit: int | None, force: bool, concurrency: int, output_dir: Path, db_path: Path):
+def fetch_readme_cmd(
+    limit: int | None, force: bool, concurrency: int, output_dir: Path, db_path: Path
+):
     """Fetch README files from GitHub and store them locally (async)."""
     if not db_path.exists():
-        console.print(f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first.")
+        console.print(
+            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
+        )
         raise SystemExit(1)
 
     with open_db(db_path) as conn:
@@ -96,7 +102,9 @@ def fetch_readme_cmd(limit: int | None, force: bool, concurrency: int, output_di
             console.print("[green]All repositories already have a README.[/green]")
             return
 
-        console.print(f"[dim]Fetching READMEs for {len(rows)} repositories (concurrency={concurrency})...[/dim]\n")
+        console.print(
+            f"[dim]Fetching READMEs for {len(rows)} repositories (concurrency={concurrency})...[/dim]\n"
+        )
         ok = skipped = errors = 0
 
         async def run():
@@ -129,7 +137,9 @@ def fetch_readme_cmd(limit: int | None, force: bool, concurrency: int, output_di
 def analyze(limit: int, db_path: Path):
     """Analyze starred repositories with Claude and assign an interest score (1-5)."""
     if not db_path.exists():
-        console.print(f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first.")
+        console.print(
+            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
+        )
         raise SystemExit(1)
 
     with open_db(db_path) as conn:
@@ -140,7 +150,9 @@ def analyze(limit: int, db_path: Path):
             return
 
         has_readme = sum(1 for r in rows if r["readme_path"])
-        console.print(f"[dim]Analyzing {len(rows)} repositories ({has_readme} with README)...[/dim]\n")
+        console.print(
+            f"[dim]Analyzing {len(rows)} repositories ({has_readme} with README)...[/dim]\n"
+        )
 
         for i, row in enumerate(rows):
             name = row["name_with_owner"]
@@ -172,25 +184,25 @@ def _build_note(row: sqlite3.Row, tag: str) -> str:
     score_badge = "⭐" * row["score"]
     archived_line = "\n> ⚠️ Archived" if row["is_archived"] else ""
     return f"""---
-title: "{row['name_with_owner']}"
-url: {row['url']}
+title: "{row["name_with_owner"]}"
+url: {row["url"]}
 language: {lang}
 topics: {topics_yaml}
-score: {row['score']}
-summary: "{row['summary']}"
-starred_at: {row['starred_at'][:10]}
+score: {row["score"]}
+summary: "{row["summary"]}"
+starred_at: {row["starred_at"][:10]}
 tags: {tags_yaml}
 ---
 
 # {owner}/{repo}
 
-> {row['summary']}{archived_line}
+> {row["summary"]}{archived_line}
 
-{score_badge} **Score {row['score']}/5** | **Language:** {lang} | **Stars:** {row['stargazer_count']:,} | **Last push:** {pushed}
+{score_badge} **Score {row["score"]}/5** | **Language:** {lang} | **Stars:** {row["stargazer_count"]:,} | **Last push:** {pushed}
 
 **Topics:** {", ".join(f"`{t}`" for t in topics_list) if topics_list else "_(none)_"}
 
-[View on GitHub]({row['url']})
+[View on GitHub]({row["url"]})
 """
 
 
@@ -198,12 +210,16 @@ tags: {tags_yaml}
 @click.option("--vault", required=True, type=Path, help="Path to your Obsidian vault")
 @click.option("--min-score", default=4, show_default=True, help="Minimum interest score to export")
 @click.option("--tag", default="github/starred", show_default=True, help="Obsidian tag to add")
-@click.option("--prune", is_flag=True, default=False, help="Delete notes for repos no longer meeting criteria")
+@click.option(
+    "--prune", is_flag=True, default=False, help="Delete notes for repos no longer meeting criteria"
+)
 @click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
 def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path: Path):
     """Export high-scoring repositories as lightweight Obsidian notes."""
     if not db_path.exists():
-        console.print(f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first.")
+        console.print(
+            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
+        )
         raise SystemExit(1)
 
     dest_dir = vault / "Sources" / "GitHub Stars"
@@ -213,7 +229,9 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
         rows = get_repos_for_export(conn, min_score)
 
     if not rows:
-        console.print(f"[yellow]No repositories with score >= {min_score} found. Run [bold]starred analyze[/bold] first.[/yellow]")
+        console.print(
+            f"[yellow]No repositories with score >= {min_score} found. Run [bold]starred analyze[/bold] first.[/yellow]"
+        )
         return
 
     console.print(f"[dim]Exporting {len(rows)} repositories to [cyan]{dest_dir}[/cyan]...[/dim]\n")
@@ -257,7 +275,7 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
         parts.append(f"[dim]{unchanged} unchanged[/dim]")
     if pruned:
         parts.append(f"[red]{pruned} pruned[/red]")
-    console.print(f"\n[bold]Done.[/bold] " + ", ".join(parts) + ".")
+    console.print("\n[bold]Done.[/bold] " + ", ".join(parts) + ".")
 
 
 @main.command("list")
@@ -267,7 +285,13 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
 @click.option("--min-score", default=None, type=int, help="Filter by minimum interest score (1-5)")
 @click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
 @click.option("--limit", default=50, show_default=True, help="Max rows to display")
-@click.option("--description", "show_description", is_flag=True, default=False, help="Show repository description")
+@click.option(
+    "--description",
+    "show_description",
+    is_flag=True,
+    default=False,
+    help="Show repository description",
+)
 def list_repos(
     lang: str | None,
     archived: bool,
@@ -279,7 +303,9 @@ def list_repos(
 ):
     """List starred repositories."""
     if not db_path.exists():
-        console.print(f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first.")
+        console.print(
+            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
+        )
         raise SystemExit(1)
 
     with open_db(db_path) as conn:
@@ -301,7 +327,9 @@ def list_repos(
         if archived:
             conditions.append("r.is_archived = 1")
         if topic:
-            conditions.append("EXISTS (SELECT 1 FROM topics WHERE repo_id = r.id AND topic_name = ?)")
+            conditions.append(
+                "EXISTS (SELECT 1 FROM topics WHERE repo_id = r.id AND topic_name = ?)"
+            )
             params.append(topic)
         if min_score is not None:
             conditions.append("a.score >= ?")

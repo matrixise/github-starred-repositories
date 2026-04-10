@@ -154,7 +154,9 @@ def get_repos_without_analysis(conn: sqlite3.Connection, limit: int) -> list[sql
     ).fetchall()
 
 
-def get_repos_for_readme(conn: sqlite3.Connection, limit: int | None, force: bool = False) -> list[sqlite3.Row]:
+def get_repos_for_readme(
+    conn: sqlite3.Connection, limit: int | None, force: bool = False
+) -> list[sqlite3.Row]:
     sql = "SELECT id, name_with_owner FROM repositories"
     if not force:
         sql += " WHERE readme_path IS NULL"
@@ -189,7 +191,9 @@ def get_repos_for_export(conn: sqlite3.Connection, min_score: int) -> list[sqlit
     ).fetchall()
 
 
-def get_repos_without_analysis_with_readme(conn: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
+def get_repos_without_analysis_with_readme(
+    conn: sqlite3.Connection, limit: int
+) -> list[sqlite3.Row]:
     return conn.execute(
         """
         SELECT r.id, r.name_with_owner, r.description, r.primary_language,
@@ -208,9 +212,7 @@ def get_repos_without_analysis_with_readme(conn: sqlite3.Connection, limit: int)
 
 
 def get_last_starred_at(conn: sqlite3.Connection) -> datetime | None:
-    row = conn.execute(
-        "SELECT MAX(starred_at) AS max_starred FROM repositories"
-    ).fetchone()
+    row = conn.execute("SELECT MAX(starred_at) AS max_starred FROM repositories").fetchone()
     if row and row["max_starred"]:
         return datetime.fromisoformat(row["max_starred"])
     return None
