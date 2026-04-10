@@ -1,6 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .models import StarredRepo
@@ -66,7 +66,7 @@ def open_db(path: Path = DEFAULT_DB):
 
 
 def upsert_repo(conn: sqlite3.Connection, repo: StarredRepo) -> int:
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     conn.execute(
         """
         INSERT INTO repositories
@@ -122,7 +122,7 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 
 def upsert_analysis(conn: sqlite3.Connection, repo_id: int, score: int, summary: str) -> None:
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(UTC).isoformat()
     conn.execute(
         """
         INSERT INTO analysis (repo_id, score, summary, analyzed_at)

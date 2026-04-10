@@ -57,10 +57,14 @@ def _get_token() -> str:
     raise RuntimeError("No GitHub token found. Set GITHUB_TOKEN or run `gh auth login`.")
 
 
-def _parse_dt(value: str | None) -> datetime | None:
+def _parse_dt(value: str) -> datetime:
+    return datetime.fromisoformat(value.rstrip("Z") + "+00:00")
+
+
+def _parse_dt_optional(value: str | None) -> datetime | None:
     if not value:
         return None
-    return datetime.fromisoformat(value.rstrip("Z") + "+00:00")
+    return _parse_dt(value)
 
 
 def _parse_edge(edge: dict) -> StarredRepo:
@@ -73,7 +77,7 @@ def _parse_edge(edge: dict) -> StarredRepo:
         description=node.get("description"),
         topics=topics,
         is_archived=node["isArchived"],
-        pushed_at=_parse_dt(node.get("pushedAt")),
+        pushed_at=_parse_dt_optional(node.get("pushedAt")),
         url=node["url"],
         primary_language=lang["name"] if lang else None,
         stargazer_count=node["stargazerCount"],
