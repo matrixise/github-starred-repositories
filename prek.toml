@@ -10,4 +10,5 @@ hooks = [
 repo = "local"
 hooks = [
   { id = "ty", name = "ty type check", language = "system", entry = "uv run ty check", pass_filenames = false },
+  { id = "gitleaks", name = "gitleaks secret scan", language = "system", entry = "gitleaks git --verbose", pass_filenames = false, stages = ["pre-push"] },
 ]
