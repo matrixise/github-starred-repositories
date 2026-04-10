@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+dotenv: ['.env']
+
+vars:
+  CONCURRENCY: '10'
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  sync:
+    desc: Sync starred repositories from GitHub (incremental)
+    cmds:
+      - uv run starred sync
+
+  sync:full:
+    desc: Full sync — reload all starred repositories from scratch
+    cmds:
+      - uv run starred sync --full
+
+  fetch-readme:
+    desc: "Fetch README files (usage: task fetch-readme [LIMIT=50] [CONCURRENCY=10])"
+    cmds:
+      - uv run starred fetch-readme {{if .LIMIT}}--limit {{.LIMIT}}{{end}} --concurrency {{.CONCURRENCY}}
+
+  analyze:
+    desc: "Analyze repositories with Claude (usage: task analyze [LIMIT=20])"
+    cmds:
+      - uv run starred analyze {{if .LIMIT}}--limit {{.LIMIT}}{{end}}
+
+  export:
+    desc: Export high-scoring repositories to Obsidian vault (reads OBSIDIAN_* from .env)
+    cmds:
+      - uv run starred export-obsidian --vault "$OBSIDIAN_VAULT" --min-score "$OBSIDIAN_MIN_SCORE" --tag "$OBSIDIAN_TAG"
+
+  export:prune:
+    desc: Export to Obsidian and remove orphan notes
+    cmds:
+      - uv run starred export-obsidian --vault "$OBSIDIAN_VAULT" --min-score "$OBSIDIAN_MIN_SCORE" --tag "$OBSIDIAN_TAG" --prune
+
+  update:
+    desc: Full pipeline — sync, fetch READMEs, analyze, export to Obsidian
+    cmds:
+      - task: sync
+      - task: fetch-readme
+      - task: analyze
+      - task: export
