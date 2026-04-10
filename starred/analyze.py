@@ -3,6 +3,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 from claude_code_sdk import ClaudeCodeOptions, query
 from claude_code_sdk.types import AssistantMessage, TextBlock
@@ -42,7 +43,7 @@ def _build_prompt(row: sqlite3.Row) -> str:
     pushed = row["pushed_at"][:10] if row["pushed_at"] else "unknown"
 
     readme_section = ""
-    readme_path = row["readme_path"] if "readme_path" in row.keys() else None  # noqa: SIM118
+    readme_path = row["readme_path"]
     if readme_path and Path(readme_path).exists():
         content = Path(readme_path).read_text(encoding="utf-8", errors="replace")
         if len(content) > README_MAX_CHARS:
@@ -61,7 +62,7 @@ def _build_prompt(row: sqlite3.Row) -> str:
     )
 
 
-def _extract_json(text: str) -> dict:
+def _extract_json(text: str) -> dict[str, Any]:
     # Strip markdown code fences if present
     text = re.sub(r"```(?:json)?\s*", "", text).strip()
     return json.loads(text)
@@ -86,6 +87,8 @@ async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str]:
 
     raw = "".join(text_parts).strip()
     data = _extract_json(raw)
+    if not isinstance(data.get("score"), int | float) or "summary" not in data:
+        raise ValueError(f"Unexpected Claude response format: {raw!r}")
     score = max(1, min(5, int(data["score"])))
     summary = str(data["summary"])
     return row["id"], score, summary
