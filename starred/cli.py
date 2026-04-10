@@ -1,4 +1,5 @@
 import asyncio
+import re as _re
 import sqlite3
 import time
 from pathlib import Path
@@ -25,6 +26,11 @@ from .db import (
 from .readme import fetch_all_async
 
 load_dotenv()
+
+
+def _safe_filename(name: str) -> str:
+    return _re.sub(r'[<>:"/\\|?*\x00-\x1f.]', "_", name).strip()
+
 
 console = Console()
 
@@ -241,7 +247,7 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
 
     for row in rows:
         owner, repo_name = row["name_with_owner"].split("/", 1)
-        filename = f"{owner} - {repo_name}.md"
+        filename = f"{_safe_filename(owner)} - {_safe_filename(repo_name)}.md"
         valid_filenames.add(filename)
         note_path = dest_dir / filename
         note = _build_note(row, tag)
