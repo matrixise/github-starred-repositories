@@ -44,6 +44,11 @@ tasks:
     cmds:
       - uv run starred export-obsidian --vault "$OBSIDIAN_VAULT" --min-score "$OBSIDIAN_MIN_SCORE" --tag "$OBSIDIAN_TAG" --prune
 
+  secrets:
+    desc: Scan git history for leaked secrets with gitleaks
+    cmds:
+      - gitleaks git --verbose
+
   update:
     desc: Full pipeline — sync, fetch READMEs, analyze, export to Obsidian
     cmds:
