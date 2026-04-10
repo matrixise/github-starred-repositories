@@ -22,7 +22,7 @@ def save_readme(content: str, name_with_owner: str, output_dir: Path) -> Path:
 async def _fetch_one(
     row: sqlite3.Row,
     client: httpx.AsyncClient,
-    headers: dict,
+    headers: dict[str, str],
     semaphore: asyncio.Semaphore,
 ) -> tuple[sqlite3.Row, str | None, Exception | None]:
     async with semaphore:
@@ -31,6 +31,10 @@ async def _fetch_one(
             resp = await client.get(url, headers=headers)
             if resp.status_code == 404:
                 return row, None, None
+            if resp.status_code == 429:
+                retry_after = int(resp.headers.get("Retry-After", "60"))
+                await asyncio.sleep(retry_after)
+                resp = await client.get(url, headers=headers)
             resp.raise_for_status()
             return row, resp.text, None
         except Exception as e:
