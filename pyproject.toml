@@ -24,6 +24,8 @@ packages = ["starred"]
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
     "ruff>=0.15.10",
     "ty>=0.0.29",
     "types-tqdm>=4.67.3.20260408",
