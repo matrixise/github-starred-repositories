@@ -24,11 +24,8 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Ruff lint
-        run: uv run ruff check .
+      - name: Install prek
+        run: uv tool install prek
 
-      - name: Ruff format check
-        run: uv run ruff format --check .
-
-      - name: Type check (ty)
-        run: uv run ty check
+      - name: Run prek hooks
+        run: prek run --all-files
