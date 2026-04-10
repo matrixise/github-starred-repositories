@@ -136,24 +136,6 @@ def upsert_analysis(conn: sqlite3.Connection, repo_id: int, score: int, summary:
     )
 
 
-def get_repos_without_analysis(conn: sqlite3.Connection, limit: int) -> list[sqlite3.Row]:
-    return conn.execute(
-        """
-        SELECT r.id, r.name_with_owner, r.description, r.primary_language,
-               r.is_archived, r.pushed_at, r.stargazer_count,
-               GROUP_CONCAT(t.topic_name, ', ') AS topics
-        FROM repositories r
-        LEFT JOIN topics t ON t.repo_id = r.id
-        LEFT JOIN analysis a ON a.repo_id = r.id
-        WHERE a.repo_id IS NULL
-        GROUP BY r.id
-        ORDER BY r.starred_at DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
-
-
 def get_repos_for_readme(
     conn: sqlite3.Connection, limit: int | None, force: bool = False
 ) -> list[sqlite3.Row]:
@@ -161,9 +143,11 @@ def get_repos_for_readme(
     if not force:
         sql += " WHERE readme_path IS NULL"
     sql += " ORDER BY starred_at DESC"
+    params: tuple = ()
     if limit is not None:
-        sql += f" LIMIT {limit}"
-    return conn.execute(sql).fetchall()
+        sql += " LIMIT ?"
+        params = (limit,)
+    return conn.execute(sql, params).fetchall()
 
 
 def set_readme_path(conn: sqlite3.Connection, repo_id: int, path: str | None) -> None:
