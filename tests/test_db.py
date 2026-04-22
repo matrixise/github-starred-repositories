@@ -27,9 +27,7 @@ class TestUpsertRepo:
         assert isinstance(repo_id, int)
         assert repo_id > 0
 
-        row = db.execute(
-            "SELECT * FROM repositories WHERE id = ?", (repo_id,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM repositories WHERE id = ?", (repo_id,)).fetchone()
         assert row is not None
         assert row["name_with_owner"] == "octocat/hello-world"
         assert row["description"] == "A test repository"
@@ -190,9 +188,7 @@ class TestUpsertAnalysis:
         repo_id = upsert_repo(db, sample_repo)
         upsert_analysis(db, repo_id, score=4, summary="Great tool for developers")
 
-        row = db.execute(
-            "SELECT * FROM analysis WHERE repo_id = ?", (repo_id,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM analysis WHERE repo_id = ?", (repo_id,)).fetchone()
         assert row is not None
         assert row["score"] == 4
         assert row["summary"] == "Great tool for developers"
@@ -202,9 +198,7 @@ class TestUpsertAnalysis:
         upsert_analysis(db, repo_id, score=2, summary="First analysis")
         upsert_analysis(db, repo_id, score=5, summary="Updated analysis")
 
-        rows = db.execute(
-            "SELECT * FROM analysis WHERE repo_id = ?", (repo_id,)
-        ).fetchall()
+        rows = db.execute("SELECT * FROM analysis WHERE repo_id = ?", (repo_id,)).fetchall()
         assert len(rows) == 1
         assert rows[0]["score"] == 5
         assert rows[0]["summary"] == "Updated analysis"
