@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -35,7 +35,8 @@ class TestParseDt:
     def test_returns_timezone_aware(self):
         result = _parse_dt("2024-03-15T10:30:00Z")
         assert result.tzinfo is not None
-        assert result.utcoffset().total_seconds() == 0
+        offset = result.utcoffset()
+        assert offset is not None and offset.total_seconds() == 0
 
 
 class TestParseDtOptional:
