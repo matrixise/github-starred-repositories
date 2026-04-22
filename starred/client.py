@@ -84,6 +84,58 @@ def _parse_edge(edge: dict) -> StarredRepo:
     )
 
 
+def fetch_stargazer_counts(
+    repos: list[tuple[int, str]],
+    batch_size: int = 100,
+) -> Generator[tuple[int, int | None], None, None]:
+    """
+    Yield (repo_id, stargazer_count) for each repo in `repos`.
+
+    Uses batched GraphQL aliases (one request per `batch_size` repos).
+    Yields `None` for repos that no longer exist (renamed/deleted).
+    """
+    token = _get_token()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    with httpx.Client(timeout=30) as client:
+        for start in range(0, len(repos), batch_size):
+            batch = repos[start : start + batch_size]
+            aliases = []
+            var_defs = []
+            variables: dict[str, str] = {}
+            for idx, (_repo_id, name_with_owner) in enumerate(batch):
+                owner, name = name_with_owner.split("/", 1)
+                aliases.append(
+                    f"r{idx}: repository(owner: $o{idx}, name: $n{idx}) {{ stargazerCount }}"
+                )
+                var_defs.append(f"$o{idx}: String!, $n{idx}: String!")
+                variables[f"o{idx}"] = owner
+                variables[f"n{idx}"] = name
+            query = "query(" + ", ".join(var_defs) + ") { " + " ".join(aliases) + " }"
+
+            resp = client.post(
+                GITHUB_GRAPHQL_URL,
+                headers=headers,
+                json={"query": query, "variables": variables},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if "data" not in data or data["data"] is None:
+                raise RuntimeError(f"GraphQL error: {data.get('errors')}")
+
+            payload = data["data"]
+            for idx, (repo_id, _name) in enumerate(batch):
+                node = payload.get(f"r{idx}")
+                if node is None:
+                    yield repo_id, None
+                else:
+                    yield repo_id, node["stargazerCount"]
+
+
 def fetch_starred(
     stop_at: datetime | None = None,
     cursor: str | None = None,

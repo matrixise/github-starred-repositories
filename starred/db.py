@@ -157,6 +157,20 @@ def set_readme_path(conn: sqlite3.Connection, repo_id: int, path: str | None) ->
     )
 
 
+def get_all_repo_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT id, name_with_owner FROM repositories ORDER BY id"
+    ).fetchall()
+
+
+def update_stargazer_count(conn: sqlite3.Connection, repo_id: int, count: int) -> None:
+    now = datetime.now(UTC).isoformat()
+    conn.execute(
+        "UPDATE repositories SET stargazer_count = ?, synced_at = ? WHERE id = ?",
+        (count, now, repo_id),
+    )
+
+
 def get_repos_for_export(conn: sqlite3.Connection, min_score: int) -> list[sqlite3.Row]:
     return conn.execute(
         """

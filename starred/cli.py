@@ -11,8 +11,9 @@ from rich.table import Table
 from tqdm import tqdm
 
 from .analyze import analyze_repo
-from .client import fetch_starred
+from .client import fetch_stargazer_counts, fetch_starred
 from .db import (
+    get_all_repo_names,
     get_last_starred_at,
     get_repos_for_export,
     get_repos_for_readme,
@@ -20,6 +21,7 @@ from .db import (
     open_db,
     set_meta,
     set_readme_path,
+    update_stargazer_count,
     upsert_analysis,
     upsert_repo,
 )
@@ -83,6 +85,47 @@ def sync(full: bool, db_path: Path):
             set_meta(conn, "last_cursor", last_cursor)
 
     console.print(f"\n[bold]Done.[/bold] {count} repositories synced to [cyan]{db_path}[/cyan]")
+
+
+@main.command("refresh-stars")
+@click.option("--batch-size", default=100, show_default=True, help="Repos per GraphQL request")
+@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
+def refresh_stars(batch_size: int, db_path: Path):
+    """Refresh stargazer counts for all repositories (lightweight sync)."""
+    if not db_path.exists():
+        console.print(
+            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
+        )
+        raise SystemExit(1)
+
+    with open_db(db_path) as conn:
+        rows = get_all_repo_names(conn)
+        if not rows:
+            console.print("[yellow]No repositories in database.[/yellow]")
+            return
+
+        console.print(
+            f"[dim]Refreshing star counts for {len(rows)} repositories "
+            f"(batch size={batch_size})...[/dim]\n"
+        )
+
+        repos = [(r["id"], r["name_with_owner"]) for r in rows]
+        updated = missing = 0
+        try:
+            with tqdm(total=len(repos), unit="repo", dynamic_ncols=True) as bar:
+                for repo_id, count in fetch_stargazer_counts(repos, batch_size=batch_size):
+                    if count is None:
+                        missing += 1
+                    else:
+                        update_stargazer_count(conn, repo_id, count)
+                        updated += 1
+                    bar.set_postfix(updated=updated, missing=missing)
+                    bar.update(1)
+        except RuntimeError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise SystemExit(1) from None
+
+    console.print(f"\n[bold]Done.[/bold] {updated} updated, {missing} missing.")
 
 
 @main.command("fetch-readme")
