@@ -50,6 +50,21 @@ starred sync --full
 starred sync --db /path/to/custom.db
 ```
 
+### `starred refresh-stars` — Refresh star counts
+
+Updates the `stargazer_count` for every repository already in the database, without re-syncing metadata or pagination. Much faster than a full sync when you only need up-to-date star numbers.
+
+```bash
+# Refresh star counts for all repos (100 repos per GraphQL request)
+starred refresh-stars
+
+# Use a smaller batch size
+starred refresh-stars --batch-size 50
+
+# Use a custom database path
+starred refresh-stars --db /path/to/custom.db
+```
+
 ### `starred fetch-readme` — Download READMEs
 
 Downloads README files from GitHub for each repository (async, concurrent). Files are saved to `readmes/<owner>/<repo>/README.md`.
