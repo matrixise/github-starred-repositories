@@ -5,8 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from claude_code_sdk import ClaudeCodeOptions, query
-from claude_code_sdk.types import AssistantMessage, TextBlock
+from claude_agent_sdk import ClaudeAgentOptions, query
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 SYSTEM_PROMPT = (
@@ -71,21 +70,17 @@ def _extract_json(text: str) -> dict[str, Any]:
 async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str]:
     """Returns (repo_id, score, summary)."""
     prompt = _build_prompt(row)
-    text_parts: list[str] = []
+    raw = ""
 
     async for message in query(
-        prompt=prompt,
-        options=ClaudeCodeOptions(
-            system_prompt=SYSTEM_PROMPT,
+        prompt=f"{SYSTEM_PROMPT}\n\n---\n\n{prompt}",
+        options=ClaudeAgentOptions(
+            allowed_tools=[],
             permission_mode="bypassPermissions",
         ),
     ):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    text_parts.append(block.text)
-
-    raw = "".join(text_parts).strip()
+        if hasattr(message, "result"):
+            raw = message.result or ""
     data = _extract_json(raw)
     if not isinstance(data.get("score"), int | float) or "summary" not in data:
         raise ValueError(f"Unexpected Claude response format: {raw!r}")
