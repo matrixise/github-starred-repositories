@@ -5,44 +5,81 @@
 CLI tool (`starred`) that manages a curated list of GitHub starred repositories:
 
 1. Syncs repos via the **GitHub GraphQL API** into a local SQLite database (`starred.db`)
-2. Downloads READMEs via the **GitHub REST API** (async, concurrent with httpx)
-3. Analyzes each repo with **Claude** (claude-code-sdk) to produce a 1-5 interest score
-4. Lists repos with filters (language, topic, score, archived)
-5. Exports top-scored repos to an **Obsidian vault** as Markdown notes
+2. Refreshes stargazer counts in batch (`refresh-stars`, lightweight GraphQL sync)
+3. Downloads READMEs via the **GitHub REST API** (async, concurrent with httpx)
+4. Analyzes each repo with **Claude** (claude-agent-sdk) to produce a 1-5 interest score
+5. Lists repos with filters (language, topic, score, archived)
+6. Exports top-scored repos to an **Obsidian vault** as Markdown notes
 
 ## Architecture
 
 ```
 starred/
-  cli.py       # Click commands: sync, fetch-readme, analyze, list, export-obsidian
-  client.py    # GitHub GraphQL client — fetch_starred() generator (httpx sync)
-  readme.py    # GitHub REST client — fetch_all_async() (httpx async, semaphore)
-  analyze.py   # Claude analysis via claude-code-sdk — analyze_repo() / _analyze_one()
-  db.py        # SQLite layer — open_db(), upsert_repo(), upsert_analysis(), queries
+  cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, list, export-obsidian
+  client.py    # GitHub GraphQL client: fetch_starred() generator + fetch_stargazer_counts() (httpx sync)
+  readme.py    # GitHub REST client: fetch_all_async() (httpx async, semaphore)
+  analyze.py   # Claude analysis via claude-agent-sdk: analyze_repo() / _analyze_one()
+  db.py        # SQLite layer: open_db(), upsert_repo(), upsert_analysis(), queries
   models.py    # StarredRepo dataclass
+tests/         # pytest suite (conftest.py + test_analyze/test_client/test_db/test_readme)
+Taskfile.yml   # go-task entry points for the whole pipeline
+prek.toml      # prek (pre-commit) hooks: ruff, ruff-format, ty, gitleaks
 ```
 
 Entry point: `starred.cli:main` (registered in `pyproject.toml`).
+
+Obsidian notes are written to `<vault>/Sources/GitHub Stars/`, one file per repo
+(`Owner - repo.md`), with frontmatter (title, url, language, topics, score, summary,
+starred_at, tags). `export-obsidian --prune` deletes notes that no longer match.
 
 ## Tech Stack
 
 - **Python 3.11+** with `uv` for dependency and venv management
 - **click** for CLI, **rich** for terminal output, **tqdm** for progress bars
 - **httpx** (sync for GraphQL, async for REST bulk requests)
-- **claude-code-sdk** for AI analysis (`query()` async generator)
+- **claude-agent-sdk** for AI analysis (`query()` async generator + `ClaudeAgentOptions`)
 - **tenacity** for retry logic on Claude rate-limit errors
 - **SQLite** with `sqlite3` stdlib, no ORM
+- **pytest** + **pytest-asyncio** for tests, **ruff** for lint/format, **ty** for type checking
+- **go-task** (`Taskfile.yml`) as the task runner, **prek** for git hooks, **gitleaks** for secret scanning
+- **GitHub Actions** (`.github/workflows/ci.yml`): gitleaks, then prek hooks + pytest on push/PR to `main`
+
+## Configuration
+
+Copy `.env.example` to `.env`. Variables read by the CLI and the Taskfile:
+
+- `GITHUB_TOKEN` (scope `read:user`); falls back to `gh auth token` when unset
+- `OBSIDIAN_VAULT`, `OBSIDIAN_MIN_SCORE`, `OBSIDIAN_TAG` (used by the `export` tasks)
 
 ## Useful Dev Commands
 
 ```bash
-# Run commands
+# Preferred entry point: go-task (loads .env automatically)
+task                      # list all tasks
+task sync                 # incremental sync
+task sync:full            # full reload
+task fetch-readme LIMIT=50 CONCURRENCY=10
+task analyze LIMIT=20
+task export               # export to Obsidian
+task export:prune         # export + remove orphan notes
+task update               # full pipeline: sync, fetch-readme, analyze
+task secrets              # gitleaks scan on git history
+
+# Direct CLI
 uv run starred sync
 uv run starred sync --full
+uv run starred refresh-stars --batch-size 100
 uv run starred fetch-readme --limit 10 --concurrency 5
 uv run starred analyze --limit 5
 uv run starred list --min-score 4 --description
-uv run starred export-obsidian --vault ~/Documents/MyVault --min-score 4
+uv run starred export-obsidian --vault ~/Documents/MyVault --min-score 4 --prune
+
+# Quality gates (same as CI)
+uv run pytest tests/ -v
+uv run ruff check --fix .
+uv run ruff format .
+uv run ty check
+prek run --all-files
 
 # Inspect the database
 sqlite3 starred.db ".tables"
@@ -59,12 +96,15 @@ sqlite3 starred.db ".schema"
 - No unnecessary docstrings. Only add a docstring if it genuinely explains non-obvious behavior.
 - All SQLite writes use `INSERT ... ON CONFLICT DO UPDATE` (upsert pattern). Never use separate SELECT + INSERT/UPDATE sequences.
 - HTTP I/O for bulk operations (READMEs) is async using `httpx.AsyncClient` with a `asyncio.Semaphore` for concurrency control.
-- The GraphQL sync (`client.py`) is synchronous — one page at a time, not bulk.
+- The GraphQL sync (`client.py`) is synchronous, one page at a time, not bulk. `fetch_stargazer_counts()` is the exception: it batches repos with aliased GraphQL queries.
 - Claude analysis runs synchronously from the CLI but the underlying `_analyze_one()` is async; it is called via `asyncio.run()` inside `analyze_repo()`.
 - SQLite connections are managed with the `open_db()` context manager (commits on success, rolls back on error).
 - Schema migrations are applied via `_migrate()` in `db.py` using `PRAGMA table_info`.
 - Score is always clamped to [1, 5] with `max(1, min(5, ...))` after parsing Claude's JSON response.
 - The CLI uses `Path` objects consistently; string paths are only used when writing to SQLite.
+- Every command except `sync` exits with `SystemExit(1)` when `starred.db` is missing.
+- Lint and format with ruff (line length 100, rules `E,F,I,UP,B,SIM`), type-check with `ty`. Run `prek run --all-files` before pushing; CI runs the same hooks plus pytest.
+- Tests use pytest (`pytest-asyncio` is available for async cases); shared fixtures (`tmp_db`, `sample_repo`, `sample_row_dict`) live in `tests/conftest.py`. Add a test for every new DB query or HTTP client behavior.
 
 ## Do Not Commit
 
