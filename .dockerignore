@@ -1,0 +1,16 @@
+.git/
+.github/
+.venv/
+readmes/
+starred.db
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+CLAUDE.md
+Taskfile.yml
+prek.toml
+tests/

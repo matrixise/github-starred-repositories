@@ -1,19 +1,22 @@
 # github-starred-repositories
 
-A CLI tool to sync, analyze, and curate your GitHub starred repositories. It fetches starred repos via the GitHub GraphQL API, stores them in a local SQLite database, downloads their READMEs asynchronously, scores each repo with Claude (1-5), and can export the best ones to an Obsidian vault as lightweight notes.
+A CLI tool to sync, analyze, and curate your GitHub starred repositories. It fetches starred repos via the GitHub GraphQL API, stores them in PostgreSQL, downloads their READMEs asynchronously, scores each repo with Claude (1-5), and can export the best ones to an Obsidian vault as lightweight notes.
 
 ## Features
 
 - **Sync** starred repositories incrementally or in full via the GitHub GraphQL API
 - **Fetch READMEs** asynchronously and concurrently via the GitHub REST API
-- **Analyze** repositories with Claude (claude-code-sdk), producing a 1-5 interest score and a one-sentence summary
+- **Analyze** repositories with Claude (claude-agent-sdk), producing a 1-5 interest score and a one-sentence summary
 - **List** repos with filters on language, topic, score, and archived status
 - **Export** top-scored repos to Obsidian as Markdown notes with YAML frontmatter
+- **Run anywhere** with Docker: a multistage image plus a `compose.yaml` bundling PostgreSQL 18
 
 ## Requirements
 
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv) (package manager)
+- PostgreSQL 18 (a `compose.yaml` is provided, or bring your own server)
+- Docker (for the bundled database, the CLI image, and the test suite)
 - [gh CLI](https://cli.github.com/) (optional — used as token fallback if `GITHUB_TOKEN` is not set)
 - A GitHub personal access token with `read:user` scope, **or** an active `gh auth login` session
 - Claude Code CLI installed and authenticated (for `starred analyze`)
@@ -27,17 +30,50 @@ cd github-starred-repositories
 # Install dependencies
 uv sync
 
-# Configure authentication (choose one)
+# Configure the environment
 cp .env.example .env
-# Edit .env and set GITHUB_TOKEN=ghp_...
-# OR just run `gh auth login` and the tool will use gh auth token as fallback
+# Edit .env and set GITHUB_TOKEN=ghp_... (or run `gh auth login` as fallback)
+# DATABASE_URL defaults to postgresql://starred:starred@localhost:5432/starred
+
+# Start PostgreSQL 18
+task db:up            # or: docker compose up -d --wait db
 ```
+
+The schema is created automatically the first time a command connects, so there is no
+migration step to run.
+
+### Coming from the SQLite version?
+
+The old `starred.db` file can be imported once into PostgreSQL:
+
+```bash
+starred import-sqlite                       # reads ./starred.db
+starred import-sqlite --db-file /path/to/starred.db
+```
+
+The import is idempotent: repositories, topics, analyses, README paths, and the sync
+cursor are all upserted.
+
+## Docker
+
+```bash
+# Build the image (multistage: uv builds the venv, runtime is a slim Python)
+task docker:build
+
+# Run any command inside the container
+docker compose run --rm starred sync
+docker compose run --rm starred list --min-score 4
+```
+
+`starred analyze` is **not** available in the container: it drives the Claude CLI, which
+stays on your machine. Run it locally with `uv run starred analyze` while the database
+runs in Docker.
 
 ## Usage
 
 ### `starred sync` — Fetch starred repositories
 
-Fetches your starred repos from GitHub and stores them in `starred.db`. By default, runs incrementally (stops at the most recently seen `starred_at` date). Use `--full` to re-sync everything.
+Fetches your starred repos from GitHub and stores them in PostgreSQL. By default, runs incrementally (stops at the most recently seen `starred_at` date). Use `--full` to re-sync everything.
 
 ```bash
 # Incremental sync (default)
@@ -46,8 +82,8 @@ starred sync
 # Full refresh — fetch all starred repositories
 starred sync --full
 
-# Use a custom database path
-starred sync --db /path/to/custom.db
+# Use a specific database (defaults to $DATABASE_URL)
+starred sync --dsn postgresql://user:pass@host:5432/starred
 ```
 
 ### `starred refresh-stars` — Refresh star counts
@@ -61,8 +97,8 @@ starred refresh-stars
 # Use a smaller batch size
 starred refresh-stars --batch-size 50
 
-# Use a custom database path
-starred refresh-stars --db /path/to/custom.db
+# Use a specific database (defaults to $DATABASE_URL)
+starred refresh-stars --dsn postgresql://user:pass@host:5432/starred
 ```
 
 ### `starred fetch-readme` — Download READMEs
@@ -85,7 +121,7 @@ starred fetch-readme --output-dir /path/to/readmes
 
 ### `starred analyze` — Score repositories with Claude
 
-Analyzes repositories using Claude (claude-code-sdk). Each repo gets an integer score from 1 to 5 and a one-sentence summary. Repos with a README are analyzed with the full content (first 3000 characters).
+Analyzes repositories using Claude (claude-agent-sdk). Each repo gets an integer score from 1 to 5 and a one-sentence summary. Repos with a README are analyzed with the full content (first 3000 characters).
 
 ```bash
 # Analyze 20 repositories (default)
@@ -155,6 +191,9 @@ Each note includes YAML frontmatter (`title`, `url`, `language`, `topics`, `scor
 ## Recommended Workflow
 
 ```bash
+# 0. Make sure PostgreSQL is running
+task db:up
+
 # 1. Sync your starred repos (incremental by default)
 starred sync
 
@@ -175,22 +214,22 @@ Run `starred analyze` repeatedly until all repos with READMEs have been scored. 
 
 ## Database Schema
 
-The local SQLite database (`starred.db`) contains four tables:
+The PostgreSQL database contains four tables, created on demand:
 
 ### `repositories`
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | INTEGER PK | Auto-increment primary key |
+| `id` | INTEGER PK | Identity primary key |
 | `name_with_owner` | TEXT UNIQUE | e.g. `torvalds/linux` |
 | `description` | TEXT | Repository description |
 | `url` | TEXT | GitHub URL |
-| `is_archived` | INTEGER | 0 or 1 |
-| `pushed_at` | TEXT | ISO 8601 datetime of last push |
-| `starred_at` | TEXT | ISO 8601 datetime when starred |
+| `is_archived` | BOOLEAN | Archived flag |
+| `pushed_at` | TIMESTAMPTZ | Last push |
+| `starred_at` | TIMESTAMPTZ | When you starred it |
 | `primary_language` | TEXT | Primary programming language |
 | `stargazer_count` | INTEGER | Number of GitHub stars |
-| `synced_at` | TEXT | ISO 8601 datetime of last sync |
+| `synced_at` | TIMESTAMPTZ | Last sync |
 | `readme_path` | TEXT | Local path to downloaded README |
 
 ### `topics`
@@ -207,7 +246,7 @@ The local SQLite database (`starred.db`) contains four tables:
 | `repo_id` | INTEGER FK | References `repositories(id)` |
 | `score` | INTEGER | Interest score 1-5 |
 | `summary` | TEXT | One-sentence summary from Claude |
-| `analyzed_at` | TEXT | ISO 8601 datetime of analysis |
+| `analyzed_at` | TIMESTAMPTZ | When the analysis ran |
 
 ### `meta`
 

@@ -44,6 +44,54 @@ tasks:
     cmds:
       - uv run starred export-obsidian --vault "$OBSIDIAN_VAULT" --min-score "$OBSIDIAN_MIN_SCORE" --tag "$OBSIDIAN_TAG" --prune
 
+  db:up:
+    desc: Start the PostgreSQL 18 container and wait until it is healthy
+    cmds:
+      - docker compose up -d --wait db
+
+  db:down:
+    desc: Stop the PostgreSQL container (keeps the data volume)
+    cmds:
+      - docker compose down
+
+  db:reset:
+    desc: Stop PostgreSQL and delete its data volume
+    prompt: This deletes all data in the starred database. Continue?
+    cmds:
+      - docker compose down -v
+
+  db:psql:
+    desc: Open a psql shell on the running database
+    cmds:
+      - docker compose exec db psql -U "${POSTGRES_USER:-starred}" -d "${POSTGRES_DB:-starred}"
+
+  import:sqlite:
+    desc: "Import a legacy SQLite database (usage: task import:sqlite [FILE=starred.db])"
+    cmds:
+      - uv run starred import-sqlite --db-file {{.FILE | default "starred.db"}}
+
+  docker:build:
+    desc: Build the starred Docker image
+    cmds:
+      - docker compose build starred
+
+  docker:run:
+    desc: "Run the CLI in Docker (usage: task docker:run -- list --limit 5)"
+    cmds:
+      - docker compose run --rm starred {{.CLI_ARGS}}
+
+  test:
+    desc: Run the test suite (starts a throwaway PostgreSQL container)
+    cmds:
+      - uv run pytest tests/ -v
+
+  lint:
+    desc: Run ruff, formatting check and type checking
+    cmds:
+      - uv run ruff check .
+      - uv run ruff format --check .
+      - uv run ty check
+
   secrets:
     desc: Scan git history for leaked secrets with gitleaks
     cmds:
