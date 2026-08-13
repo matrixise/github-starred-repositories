@@ -1,7 +1,7 @@
 import asyncio
 import json
 import re
-import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -38,8 +38,8 @@ Score guide:
 """
 
 
-def _build_prompt(row: sqlite3.Row) -> str:
-    pushed = row["pushed_at"][:10] if row["pushed_at"] else "unknown"
+def _build_prompt(row: Mapping[str, Any]) -> str:
+    pushed = row["pushed_at"].date().isoformat() if row["pushed_at"] else "unknown"
 
     readme_section = ""
     readme_path = row["readme_path"]
@@ -67,10 +67,10 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(text)
 
 
-async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str]:
+async def _analyze_one(row: Mapping[str, Any]) -> tuple[int, int, str]:
     """Returns (repo_id, score, summary)."""
     prompt = _build_prompt(row)
-    raw = ""
+    raw: str = ""
 
     async for message in query(
         prompt=f"{SYSTEM_PROMPT}\n\n---\n\n{prompt}",
@@ -80,7 +80,7 @@ async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str]:
         ),
     ):
         if hasattr(message, "result"):
-            raw = message.result or ""
+            raw = str(message.result or "")
     data = _extract_json(raw)
     if not isinstance(data.get("score"), int | float) or "summary" not in data:
         raise ValueError(f"Unexpected Claude response format: {raw!r}")
@@ -99,5 +99,5 @@ def _is_rate_limit(exc: BaseException) -> bool:
     stop=stop_after_attempt(4),
     reraise=True,
 )
-def analyze_repo(row: sqlite3.Row) -> tuple[int, int, str]:
+def analyze_repo(row: Mapping[str, Any]) -> tuple[int, int, str]:
     return asyncio.run(_analyze_one(row))

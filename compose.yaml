@@ -1,0 +1,42 @@
+name: starred
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-starred}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-starred}
+      POSTGRES_DB: ${POSTGRES_DB:-starred}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18 images keep PGDATA under /var/lib/postgresql/18/docker,
+      # so the volume is mounted one level up (not /var/lib/postgresql/data).
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-starred} -d ${POSTGRES_DB:-starred}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  starred:
+    build:
+      context: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-starred}:${POSTGRES_PASSWORD:-starred}@db:5432/${POSTGRES_DB:-starred}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      OBSIDIAN_VAULT: /vault
+      OBSIDIAN_MIN_SCORE: ${OBSIDIAN_MIN_SCORE:-4}
+      OBSIDIAN_TAG: ${OBSIDIAN_TAG:-github/starred}
+    volumes:
+      - ./readmes:/app/readmes
+      - ${OBSIDIAN_VAULT:-./readmes}:/vault
+    # One-shot CLI: run commands with `docker compose run --rm starred <command>`.
+    profiles: ["cli"]
+
+volumes:
+  pgdata:

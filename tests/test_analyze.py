@@ -58,7 +58,6 @@ class TestBuildPrompt:
 
     def test_contains_pushed_date(self, sample_row_dict):
         prompt = _build_prompt(sample_row_dict)
-        # pushed_at[:10] → "2024-02-01"
         assert "2024-02-01" in prompt
 
     def test_no_readme_section_when_none(self, sample_row_dict):
@@ -81,7 +80,7 @@ class TestBuildPrompt:
         assert "unknown" in prompt
 
     def test_archived_yes(self, sample_row_dict):
-        sample_row_dict["is_archived"] = 1
+        sample_row_dict["is_archived"] = True
         prompt = _build_prompt(sample_row_dict)
         assert "Archived: yes" in prompt
 

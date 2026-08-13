@@ -1,17 +1,27 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
+from testcontainers.community.postgres import PostgresContainer
 
 from starred.db import open_db
 from starred.models import StarredRepo
 
+TABLES = "repositories, topics, analysis, meta"
+
+
+@pytest.fixture(scope="session")
+def postgres_dsn() -> Iterator[str]:
+    """Start a throwaway PostgreSQL 18 container for the whole test session."""
+    with PostgresContainer("postgres:18-alpine", driver=None) as container:
+        yield container.get_connection_url()
+
 
 @pytest.fixture
-def tmp_db(tmp_path: Path):
-    """Create a SQLite database in a temp directory and yield an open connection."""
-    db_path = tmp_path / "test.db"
-    with open_db(db_path) as conn:
+def db(postgres_dsn: str):
+    """Yield a connection on an empty schema (tables truncated between tests)."""
+    with open_db(postgres_dsn) as conn:
+        conn.execute(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE")
         yield conn
 
 
@@ -34,7 +44,7 @@ def sample_repo() -> StarredRepo:
 @pytest.fixture
 def sample_row_dict() -> dict:
     """
-    Return a dict representing a sqlite3.Row-like mapping with all fields
+    Return a dict representing a database row with all fields
     needed by _build_prompt.
     """
     return {
@@ -42,8 +52,8 @@ def sample_row_dict() -> dict:
         "name_with_owner": "octocat/hello-world",
         "description": "A test repository",
         "primary_language": "Python",
-        "is_archived": 0,
-        "pushed_at": "2024-02-01T08:00:00+00:00",
+        "is_archived": False,
+        "pushed_at": datetime(2024, 2, 1, 8, 0, 0, tzinfo=UTC),
         "stargazer_count": 42,
         "topics": "python, testing",
         "readme_path": None,

@@ -14,6 +14,7 @@ dependencies = [
     "claude-agent-sdk>=0.1.76",
     "tenacity>=9.1.4",
     "tqdm>=4.67.3",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.scripts]
@@ -29,6 +30,7 @@ dev = [
     "ruff>=0.15.10",
     "ty>=0.0.29",
     "types-tqdm>=4.67.3.20260408",
+    "testcontainers[postgres]>=4.9",
 ]
 
 [tool.ruff]

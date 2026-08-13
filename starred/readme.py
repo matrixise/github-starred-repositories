@@ -1,7 +1,7 @@
 import asyncio
-import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -20,11 +20,11 @@ def save_readme(content: str, name_with_owner: str, output_dir: Path) -> Path:
 
 
 async def _fetch_one(
-    row: sqlite3.Row,
+    row: Mapping[str, Any],
     client: httpx.AsyncClient,
     headers: dict[str, str],
     semaphore: asyncio.Semaphore,
-) -> tuple[sqlite3.Row, str | None, Exception | None]:
+) -> tuple[Mapping[str, Any], str | None, Exception | None]:
     async with semaphore:
         url = GITHUB_REST_URL.format(name_with_owner=row["name_with_owner"])
         try:
@@ -42,10 +42,10 @@ async def _fetch_one(
 
 
 async def fetch_all_async(
-    rows: list[sqlite3.Row],
+    rows: Sequence[Mapping[str, Any]],
     output_dir: Path,
     concurrency: int = 10,
-) -> AsyncIterator[tuple[sqlite3.Row, Path | None, Exception | None]]:
+) -> AsyncIterator[tuple[Mapping[str, Any], Path | None, Exception | None]]:
     """
     Fetch READMEs for all rows concurrently.
     Yields (row, saved_path_or_None, error_or_None) as each completes.

@@ -1,24 +1,12 @@
 from datetime import UTC, datetime
-from pathlib import Path
-
-import pytest
 
 from starred.db import (
     get_last_starred_at,
     get_repos_for_readme,
-    open_db,
     upsert_analysis,
     upsert_repo,
 )
 from starred.models import StarredRepo
-
-
-@pytest.fixture
-def db(tmp_path: Path):
-    """Provide a live SQLite connection via open_db for the duration of the test."""
-    db_path = tmp_path / "test.db"
-    with open_db(db_path) as conn:
-        yield conn
 
 
 class TestUpsertRepo:
@@ -27,13 +15,13 @@ class TestUpsertRepo:
         assert isinstance(repo_id, int)
         assert repo_id > 0
 
-        row = db.execute("SELECT * FROM repositories WHERE id = ?", (repo_id,)).fetchone()
+        row = db.execute("SELECT * FROM repositories WHERE id = %s", (repo_id,)).fetchone()
         assert row is not None
         assert row["name_with_owner"] == "octocat/hello-world"
         assert row["description"] == "A test repository"
         assert row["primary_language"] == "Python"
         assert row["stargazer_count"] == 42
-        assert row["is_archived"] == 0
+        assert row["is_archived"] is False
 
     def test_upsert_deduplication(self, db, sample_repo):
         """Inserting the same repo twice should not create a duplicate row."""
@@ -41,7 +29,7 @@ class TestUpsertRepo:
         id2 = upsert_repo(db, sample_repo)
         assert id1 == id2
 
-        count = db.execute("SELECT COUNT(*) FROM repositories").fetchone()[0]
+        count = db.execute("SELECT COUNT(*) AS n FROM repositories").fetchone()["n"]
         assert count == 1
 
     def test_upsert_updates_fields(self, db, sample_repo):
@@ -60,20 +48,20 @@ class TestUpsertRepo:
         upsert_repo(db, updated)
 
         row = db.execute(
-            "SELECT * FROM repositories WHERE name_with_owner = ?",
+            "SELECT * FROM repositories WHERE name_with_owner = %s",
             (sample_repo.name_with_owner,),
         ).fetchone()
         assert row["description"] == "Updated description"
         assert row["primary_language"] == "Rust"
         assert row["stargazer_count"] == 100
-        assert row["is_archived"] == 1
+        assert row["is_archived"] is True
 
     def test_topics_stored(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
         topics = {
             row["topic_name"]
             for row in db.execute(
-                "SELECT topic_name FROM topics WHERE repo_id = ?", (repo_id,)
+                "SELECT topic_name FROM topics WHERE repo_id = %s ORDER BY topic_name", (repo_id,)
             ).fetchall()
         }
         assert topics == {"python", "testing"}
@@ -95,7 +83,7 @@ class TestUpsertRepo:
         topics = [
             row["topic_name"]
             for row in db.execute(
-                "SELECT topic_name FROM topics WHERE repo_id = ?", (repo_id,)
+                "SELECT topic_name FROM topics WHERE repo_id = %s ORDER BY topic_name", (repo_id,)
             ).fetchall()
         ]
         assert topics == ["new-topic"]
@@ -149,7 +137,7 @@ class TestGetReposForReadme:
     def test_excludes_repos_with_readme_path(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
         db.execute(
-            "UPDATE repositories SET readme_path = ? WHERE id = ?",
+            "UPDATE repositories SET readme_path = %s WHERE id = %s",
             ("/some/path/README.md", repo_id),
         )
         result = get_repos_for_readme(db, limit=None)
@@ -158,7 +146,7 @@ class TestGetReposForReadme:
     def test_force_returns_all_repos(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
         db.execute(
-            "UPDATE repositories SET readme_path = ? WHERE id = ?",
+            "UPDATE repositories SET readme_path = %s WHERE id = %s",
             ("/some/path/README.md", repo_id),
         )
         result = get_repos_for_readme(db, limit=None, force=True)
@@ -188,7 +176,7 @@ class TestUpsertAnalysis:
         repo_id = upsert_repo(db, sample_repo)
         upsert_analysis(db, repo_id, score=4, summary="Great tool for developers")
 
-        row = db.execute("SELECT * FROM analysis WHERE repo_id = ?", (repo_id,)).fetchone()
+        row = db.execute("SELECT * FROM analysis WHERE repo_id = %s", (repo_id,)).fetchone()
         assert row is not None
         assert row["score"] == 4
         assert row["summary"] == "Great tool for developers"
@@ -198,7 +186,7 @@ class TestUpsertAnalysis:
         upsert_analysis(db, repo_id, score=2, summary="First analysis")
         upsert_analysis(db, repo_id, score=5, summary="Updated analysis")
 
-        rows = db.execute("SELECT * FROM analysis WHERE repo_id = ?", (repo_id,)).fetchall()
+        rows = db.execute("SELECT * FROM analysis WHERE repo_id = %s", (repo_id,)).fetchall()
         assert len(rows) == 1
         assert rows[0]["score"] == 5
         assert rows[0]["summary"] == "Updated analysis"
@@ -208,9 +196,7 @@ class TestUpsertAnalysis:
         upsert_analysis(db, repo_id, score=3, summary="Moderate interest")
 
         row = db.execute(
-            "SELECT analyzed_at FROM analysis WHERE repo_id = ?", (repo_id,)
+            "SELECT analyzed_at FROM analysis WHERE repo_id = %s", (repo_id,)
         ).fetchone()
-        assert row["analyzed_at"] is not None
-        # Should be a valid ISO datetime string
-        parsed = datetime.fromisoformat(row["analyzed_at"])
-        assert parsed is not None
+        assert isinstance(row["analyzed_at"], datetime)
+        assert row["analyzed_at"].tzinfo is not None

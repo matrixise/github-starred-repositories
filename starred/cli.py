@@ -2,9 +2,14 @@ import asyncio
 import re as _re
 import sqlite3
 import time
+from collections.abc import Mapping
+from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import click
+import psycopg
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
@@ -25,6 +30,7 @@ from .db import (
     upsert_analysis,
     upsert_repo,
 )
+from .models import StarredRepo
 from .readme import fetch_all_async
 
 load_dotenv()
@@ -36,8 +42,30 @@ def _safe_filename(name: str) -> str:
 
 console = Console()
 
-DB_PATH = Path("starred.db")
 README_DIR = Path("readmes")
+LEGACY_DB = Path("starred.db")
+
+DSN_OPTION = click.option(
+    "--dsn",
+    default=None,
+    help="PostgreSQL connection string (default: $DATABASE_URL)",
+)
+
+
+@contextmanager
+def db_session(dsn: str | None):
+    """Open a database session, turning connection failures into a clean exit."""
+    try:
+        with open_db(dsn) as conn:
+            yield conn
+    except psycopg.OperationalError as exc:
+        console.print(f"[red]PostgreSQL error:[/red] {str(exc).strip()}")
+        console.print(
+            "[dim]Is the database up? Start it with [bold]task db:up[/bold] "
+            "or point DATABASE_URL at your server.[/dim]"
+        )
+        raise SystemExit(1) from None
+
 
 SCORE_COLORS = {1: "red", 2: "yellow", 3: "white", 4: "green", 5: "bold green"}
 
@@ -56,10 +84,10 @@ def main():
 
 @main.command()
 @click.option("--full", is_flag=True, default=False, help="Full refresh (ignore cache)")
-@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def sync(full: bool, db_path: Path):
-    """Fetch starred repositories and store them in SQLite."""
-    with open_db(db_path) as conn:
+@DSN_OPTION
+def sync(full: bool, dsn: str | None):
+    """Fetch starred repositories and store them in PostgreSQL."""
+    with db_session(dsn) as conn:
         stop_at = None if full else get_last_starred_at(conn)
 
         if stop_at:
@@ -84,21 +112,15 @@ def sync(full: bool, db_path: Path):
         if last_cursor:
             set_meta(conn, "last_cursor", last_cursor)
 
-    console.print(f"\n[bold]Done.[/bold] {count} repositories synced to [cyan]{db_path}[/cyan]")
+    console.print(f"\n[bold]Done.[/bold] {count} repositories synced.")
 
 
 @main.command("refresh-stars")
 @click.option("--batch-size", default=100, show_default=True, help="Repos per GraphQL request")
-@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def refresh_stars(batch_size: int, db_path: Path):
+@DSN_OPTION
+def refresh_stars(batch_size: int, dsn: str | None):
     """Refresh stargazer counts for all repositories (lightweight sync)."""
-    if not db_path.exists():
-        console.print(
-            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
-        )
-        raise SystemExit(1)
-
-    with open_db(db_path) as conn:
+    with db_session(dsn) as conn:
         rows = get_all_repo_names(conn)
         if not rows:
             console.print("[yellow]No repositories in database.[/yellow]")
@@ -133,18 +155,12 @@ def refresh_stars(batch_size: int, db_path: Path):
 @click.option("--force", is_flag=True, default=False, help="Re-fetch already downloaded READMEs")
 @click.option("--concurrency", default=10, show_default=True, help="Number of parallel requests")
 @click.option("--output-dir", default=README_DIR, type=Path, show_default=True)
-@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
+@DSN_OPTION
 def fetch_readme_cmd(
-    limit: int | None, force: bool, concurrency: int, output_dir: Path, db_path: Path
+    limit: int | None, force: bool, concurrency: int, output_dir: Path, dsn: str | None
 ):
     """Fetch README files from GitHub and store them locally (async)."""
-    if not db_path.exists():
-        console.print(
-            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
-        )
-        raise SystemExit(1)
-
-    with open_db(db_path) as conn:
+    with db_session(dsn) as conn:
         rows = get_repos_for_readme(conn, limit=limit, force=force)
 
         if not rows:
@@ -182,16 +198,10 @@ def fetch_readme_cmd(
 
 @main.command()
 @click.option("--limit", default=20, show_default=True, help="Number of repos to analyze per run")
-@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def analyze(limit: int, db_path: Path):
+@DSN_OPTION
+def analyze(limit: int, dsn: str | None):
     """Analyze starred repositories with Claude and assign an interest score (1-5)."""
-    if not db_path.exists():
-        console.print(
-            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
-        )
-        raise SystemExit(1)
-
-    with open_db(db_path) as conn:
+    with db_session(dsn) as conn:
         rows = get_repos_without_analysis_with_readme(conn, limit)
 
         if not rows:
@@ -221,7 +231,7 @@ def analyze(limit: int, db_path: Path):
     console.print("\n[bold]Done.[/bold]")
 
 
-def _build_note(row: sqlite3.Row, tag: str) -> str:
+def _build_note(row: Mapping[str, Any], tag: str) -> str:
     owner, repo = row["name_with_owner"].split("/", 1)
     topics_raw = row["topics"] or ""
     topics_list = [t.strip() for t in topics_raw.split(",") if t.strip()]
@@ -229,7 +239,7 @@ def _build_note(row: sqlite3.Row, tag: str) -> str:
     lang = row["primary_language"] or "unknown"
     lang_tag = lang.lower().replace(" ", "-").replace("+", "plus").replace("#", "sharp")
     tags_yaml = f'["{tag}", "{lang_tag}"]'
-    pushed = row["pushed_at"][:10] if row["pushed_at"] else "unknown"
+    pushed = row["pushed_at"].date().isoformat() if row["pushed_at"] else "unknown"
     score_badge = "⭐" * row["score"]
     archived_line = "\n> ⚠️ Archived" if row["is_archived"] else ""
     return f"""---
@@ -239,7 +249,7 @@ language: {lang}
 topics: {topics_yaml}
 score: {row["score"]}
 summary: "{row["summary"]}"
-starred_at: {row["starred_at"][:10]}
+starred_at: {row["starred_at"].date().isoformat()}
 tags: {tags_yaml}
 ---
 
@@ -262,19 +272,13 @@ tags: {tags_yaml}
 @click.option(
     "--prune", is_flag=True, default=False, help="Delete notes for repos no longer meeting criteria"
 )
-@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path: Path):
+@DSN_OPTION
+def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, dsn: str | None):
     """Export high-scoring repositories as lightweight Obsidian notes."""
-    if not db_path.exists():
-        console.print(
-            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
-        )
-        raise SystemExit(1)
-
     dest_dir = vault / "Sources" / "GitHub Stars"
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    with open_db(db_path) as conn:
+    with db_session(dsn) as conn:
         rows = get_repos_for_export(conn, min_score)
 
     if not rows:
@@ -332,7 +336,7 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
 @click.option("--archived", is_flag=True, default=False, help="Show only archived repos")
 @click.option("--topic", default=None, help="Filter by topic name")
 @click.option("--min-score", default=None, type=int, help="Filter by minimum interest score (1-5)")
-@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
+@DSN_OPTION
 @click.option("--limit", default=50, show_default=True, help="Max rows to display")
 @click.option(
     "--description",
@@ -346,22 +350,16 @@ def list_repos(
     archived: bool,
     topic: str | None,
     min_score: int | None,
-    db_path: Path,
+    dsn: str | None,
     limit: int,
     show_description: bool,
 ):
     """List starred repositories."""
-    if not db_path.exists():
-        console.print(
-            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
-        )
-        raise SystemExit(1)
-
-    with open_db(db_path) as conn:
+    with db_session(dsn) as conn:
         sql = """
             SELECT r.name_with_owner, r.description, r.primary_language,
                    r.is_archived, r.starred_at, r.pushed_at, r.stargazer_count,
-                   GROUP_CONCAT(DISTINCT t.topic_name) AS topics,
+                   string_agg(DISTINCT t.topic_name, ',') AS topics,
                    a.score, a.summary
             FROM repositories r
             LEFT JOIN topics t ON t.repo_id = r.id
@@ -371,23 +369,23 @@ def list_repos(
         params: list = []
 
         if lang:
-            conditions.append("r.primary_language = ?")
+            conditions.append("r.primary_language = %s")
             params.append(lang)
         if archived:
-            conditions.append("r.is_archived = 1")
+            conditions.append("r.is_archived")
         if topic:
             conditions.append(
-                "EXISTS (SELECT 1 FROM topics WHERE repo_id = r.id AND topic_name = ?)"
+                "EXISTS (SELECT 1 FROM topics WHERE repo_id = r.id AND topic_name = %s)"
             )
             params.append(topic)
         if min_score is not None:
-            conditions.append("a.score >= ?")
+            conditions.append("a.score >= %s")
             params.append(min_score)
 
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
 
-        sql += " GROUP BY r.id ORDER BY r.starred_at DESC LIMIT ?"
+        sql += " GROUP BY r.id, a.repo_id ORDER BY r.starred_at DESC LIMIT %s"
         params.append(limit)
 
         rows = conn.execute(sql, params).fetchall()
@@ -405,13 +403,13 @@ def list_repos(
     table.add_column("Topics")
 
     for row in rows:
-        pushed = row["pushed_at"][:10] if row["pushed_at"] else "—"
+        pushed = row["pushed_at"].date().isoformat() if row["pushed_at"] else "—"
         cells = [row["name_with_owner"]]
         if show_description:
             cells.append(row["description"] or "")
         cells += [
             row["primary_language"] or "—",
-            row["starred_at"][:10],
+            row["starred_at"].date().isoformat(),
             pushed,
             str(row["stargazer_count"]),
             "[red]yes[/red]" if row["is_archived"] else "no",
@@ -422,3 +420,68 @@ def list_repos(
 
     console.print(table)
     console.print(f"[dim]{len(rows)} repositories[/dim]")
+
+
+def _parse_legacy_dt(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+@main.command("import-sqlite")
+@click.option(
+    "--db-file",
+    default=LEGACY_DB,
+    type=Path,
+    show_default=True,
+    help="Legacy SQLite database to import from",
+)
+@DSN_OPTION
+def import_sqlite(db_file: Path, dsn: str | None):
+    """Import a legacy starred.db (SQLite) into PostgreSQL. Idempotent."""
+    if not db_file.exists():
+        console.print(f"[red]File not found:[/red] {db_file}")
+        raise SystemExit(1)
+
+    legacy = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+    legacy.row_factory = sqlite3.Row
+
+    repos = legacy.execute("SELECT * FROM repositories").fetchall()
+    topics_by_repo: dict[int, list[str]] = {}
+    for row in legacy.execute("SELECT repo_id, topic_name FROM topics"):
+        topics_by_repo.setdefault(row["repo_id"], []).append(row["topic_name"])
+
+    console.print(f"[dim]Importing {len(repos)} repositories from {db_file}...[/dim]\n")
+
+    imported = analyses = 0
+    with db_session(dsn) as conn:
+        id_map: dict[int, int] = {}
+        for row in repos:
+            repo = StarredRepo(
+                starred_at=datetime.fromisoformat(row["starred_at"]),
+                name_with_owner=row["name_with_owner"],
+                description=row["description"],
+                topics=topics_by_repo.get(row["id"], []),
+                is_archived=bool(row["is_archived"]),
+                pushed_at=_parse_legacy_dt(row["pushed_at"]),
+                url=row["url"],
+                primary_language=row["primary_language"],
+                stargazer_count=row["stargazer_count"],
+            )
+            new_id = upsert_repo(conn, repo)
+            id_map[row["id"]] = new_id
+            if row["readme_path"]:
+                set_readme_path(conn, new_id, row["readme_path"])
+            imported += 1
+
+        for row in legacy.execute("SELECT repo_id, score, summary FROM analysis"):
+            new_id = id_map.get(row["repo_id"])
+            if new_id is None:
+                continue
+            upsert_analysis(conn, new_id, row["score"], row["summary"])
+            analyses += 1
+
+        for row in legacy.execute("SELECT key, value FROM meta"):
+            if row["value"] is not None:
+                set_meta(conn, row["key"], row["value"])
+
+    legacy.close()
+    console.print(f"\n[bold]Done.[/bold] {imported} repositories, {analyses} analyses imported.")
