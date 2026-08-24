@@ -81,7 +81,7 @@ async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str]:
     ):
         if hasattr(message, "result"):
             raw = message.result or ""
-    data = _extract_json(raw)
+    data = _extract_json(str(raw))
     if not isinstance(data.get("score"), int | float) or "summary" not in data:
         raise ValueError(f"Unexpected Claude response format: {raw!r}")
     score = max(1, min(5, int(data["score"])))
