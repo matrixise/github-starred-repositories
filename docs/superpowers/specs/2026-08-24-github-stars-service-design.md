@@ -116,7 +116,7 @@ endpoint d'écriture et rend l'absence d'authentification tenable :
 starred prompt list
 starred prompt add --name <nom> --from-file <chemin>
 starred prompt activate <id>
-starred analyze --reanalyze-below-prompt <id>
+starred analyze --restale
 ```
 
 ### Configuration par environnement
