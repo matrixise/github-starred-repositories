@@ -6,6 +6,7 @@ import pytest
 from starred.db import (
     get_last_starred_at,
     get_repos_for_readme,
+    get_repos_without_analysis_with_readme,
     open_db,
     upsert_analysis,
     upsert_repo,
@@ -214,3 +215,54 @@ class TestUpsertAnalysis:
         # Should be a valid ISO datetime string
         parsed = datetime.fromisoformat(row["analyzed_at"])
         assert parsed is not None
+
+    def test_tags_stored(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags="cli-tool, automation")
+
+        row = db.execute("SELECT tags FROM analysis WHERE repo_id = ?", (repo_id,)).fetchone()
+        assert row["tags"] == "cli-tool, automation"
+
+    def test_tags_default_to_none(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        upsert_analysis(db, repo_id, score=4, summary="Great tool")
+
+        row = db.execute("SELECT tags FROM analysis WHERE repo_id = ?", (repo_id,)).fetchone()
+        assert row["tags"] is None
+
+    def test_tags_overwritten_on_upsert(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        upsert_analysis(db, repo_id, score=2, summary="First analysis", tags="old-tag")
+        upsert_analysis(db, repo_id, score=5, summary="Updated analysis", tags="new-tag")
+
+        row = db.execute("SELECT tags FROM analysis WHERE repo_id = ?", (repo_id,)).fetchone()
+        assert row["tags"] == "new-tag"
+
+
+class TestGetReposWithoutAnalysisWithReadme:
+    def test_excludes_analyzed_repos_by_default(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags="cli-tool")
+
+        result = get_repos_without_analysis_with_readme(db, limit=20)
+        assert result == []
+
+    def test_includes_unanalyzed_repos(self, db, sample_repo):
+        upsert_repo(db, sample_repo)
+
+        result = get_repos_without_analysis_with_readme(db, limit=20)
+        assert len(result) == 1
+
+    def test_force_includes_analyzed_repos_without_tags(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        upsert_analysis(db, repo_id, score=4, summary="Great tool")
+
+        result = get_repos_without_analysis_with_readme(db, limit=20, force=True)
+        assert len(result) == 1
+
+    def test_force_excludes_repos_already_tagged(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags="cli-tool")
+
+        result = get_repos_without_analysis_with_readme(db, limit=20, force=True)
+        assert result == []

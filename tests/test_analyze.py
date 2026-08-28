@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from starred.analyze import _build_prompt, _extract_json
+from starred.analyze import _build_prompt, _extract_json, _normalize_tag
 
 
 class TestExtractJson:
@@ -41,6 +41,17 @@ class TestExtractJson:
         """_extract_json should raise ValueError when 'score' key is missing."""
         with pytest.raises(ValueError):
             _extract_json('{"summary": "OK"}')
+
+
+class TestNormalizeTag:
+    def test_lowercases(self):
+        assert _normalize_tag("CLI Tool") == "cli-tool"
+
+    def test_collapses_non_alnum_to_dash(self):
+        assert _normalize_tag("data_visualization!!") == "data-visualization"
+
+    def test_strips_leading_trailing_dashes(self):
+        assert _normalize_tag("  -web framework- ") == "web-framework"
 
 
 class TestBuildPrompt:
