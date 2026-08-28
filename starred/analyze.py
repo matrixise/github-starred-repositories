@@ -27,7 +27,7 @@ Stars: {stars}
 Archived: {archived}
 {readme_section}
 Respond with ONLY a JSON object (no markdown):
-{{"score": <integer 1-5>, "summary": "<one sentence in English>"}}
+{{"score": <integer 1-5>, "summary": "<one sentence in English>", "tags": [<3 to 5 short kebab-case tags>]}}
 
 Score guide:
 1 = Not interesting (abandoned, trivial, superseded)
@@ -35,6 +35,11 @@ Score guide:
 3 = Moderate interest
 4 = High interest
 5 = Excellent (actively maintained, widely useful, innovative)
+
+Tags guide:
+3 to 5 short kebab-case tags (English) describing the repository's domain or
+purpose (e.g. "web-framework", "cli-tool", "data-visualization"). Do not repeat
+the programming language as a tag.
 """
 
 
@@ -67,8 +72,12 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(text)
 
 
-async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str]:
-    """Returns (repo_id, score, summary)."""
+def _normalize_tag(tag: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", tag.strip().lower()).strip("-")
+
+
+async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str, str]:
+    """Returns (repo_id, score, summary, tags) where tags is a comma-separated string."""
     prompt = _build_prompt(row)
     raw = ""
 
@@ -84,9 +93,12 @@ async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str]:
     data = _extract_json(str(raw))
     if not isinstance(data.get("score"), int | float) or "summary" not in data:
         raise ValueError(f"Unexpected Claude response format: {raw!r}")
+    if not isinstance(data.get("tags"), list):
+        raise ValueError(f"Unexpected Claude response format: {raw!r}")
     score = max(1, min(5, int(data["score"])))
     summary = str(data["summary"])
-    return row["id"], score, summary
+    tags = ", ".join(_normalize_tag(str(t)) for t in data["tags"] if str(t).strip())
+    return row["id"], score, summary, tags
 
 
 def _is_rate_limit(exc: BaseException) -> bool:
@@ -99,5 +111,5 @@ def _is_rate_limit(exc: BaseException) -> bool:
     stop=stop_after_attempt(4),
     reraise=True,
 )
-def analyze_repo(row: sqlite3.Row) -> tuple[int, int, str]:
+def analyze_repo(row: sqlite3.Row) -> tuple[int, int, str, str]:
     return asyncio.run(_analyze_one(row))

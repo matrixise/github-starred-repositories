@@ -182,9 +182,15 @@ def fetch_readme_cmd(
 
 @main.command()
 @click.option("--limit", default=20, show_default=True, help="Number of repos to analyze per run")
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Also re-analyze repos that were scored before tags were introduced",
+)
 @click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def analyze(limit: int, db_path: Path):
-    """Analyze starred repositories with Claude and assign an interest score (1-5)."""
+def analyze(limit: int, force: bool, db_path: Path):
+    """Analyze starred repositories with Claude and assign an interest score (1-5) and tags."""
     if not db_path.exists():
         console.print(
             f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
@@ -192,7 +198,7 @@ def analyze(limit: int, db_path: Path):
         raise SystemExit(1)
 
     with open_db(db_path) as conn:
-        rows = get_repos_without_analysis_with_readme(conn, limit)
+        rows = get_repos_without_analysis_with_readme(conn, limit, force=force)
 
         if not rows:
             console.print("[green]All repositories have already been analyzed.[/green]")
@@ -208,10 +214,10 @@ def analyze(limit: int, db_path: Path):
             readme_indicator = " [dim]+README[/dim]" if row["readme_path"] else ""
             console.print(f"  Analyzing [cyan]{name}[/cyan]{readme_indicator}...", end=" ")
             try:
-                repo_id, score, summary = analyze_repo(row)
-                upsert_analysis(conn, repo_id, score, summary)
+                repo_id, score, summary, tags = analyze_repo(row)
+                upsert_analysis(conn, repo_id, score, summary, tags)
                 color = SCORE_COLORS.get(score, "white")
-                console.print(f"[{color}]{score}/5[/{color}]  {summary}")
+                console.print(f"[{color}]{score}/5[/{color}]  {summary}  [dim]{tags}[/dim]")
             except Exception as e:
                 console.print(f"[red]error:[/red] {e}")
 

@@ -47,6 +47,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "readme_path" not in columns:
         conn.execute("ALTER TABLE repositories ADD COLUMN readme_path TEXT")
 
+    analysis_columns = {row[1] for row in conn.execute("PRAGMA table_info(analysis)")}
+    if "tags" not in analysis_columns:
+        conn.execute("ALTER TABLE analysis ADD COLUMN tags TEXT")
+
 
 @contextmanager
 def open_db(path: Path = DEFAULT_DB):
@@ -121,18 +125,21 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
     )
 
 
-def upsert_analysis(conn: sqlite3.Connection, repo_id: int, score: int, summary: str) -> None:
+def upsert_analysis(
+    conn: sqlite3.Connection, repo_id: int, score: int, summary: str, tags: str | None = None
+) -> None:
     now = datetime.now(UTC).isoformat()
     conn.execute(
         """
-        INSERT INTO analysis (repo_id, score, summary, analyzed_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO analysis (repo_id, score, summary, tags, analyzed_at)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(repo_id) DO UPDATE SET
             score       = excluded.score,
             summary     = excluded.summary,
+            tags        = excluded.tags,
             analyzed_at = excluded.analyzed_at
         """,
-        (repo_id, score, summary, now),
+        (repo_id, score, summary, tags, now),
     )
 
 
@@ -188,17 +195,18 @@ def get_repos_for_export(conn: sqlite3.Connection, min_score: int) -> list[sqlit
 
 
 def get_repos_without_analysis_with_readme(
-    conn: sqlite3.Connection, limit: int
+    conn: sqlite3.Connection, limit: int, force: bool = False
 ) -> list[sqlite3.Row]:
+    where = "a.repo_id IS NULL OR a.tags IS NULL" if force else "a.repo_id IS NULL"
     return conn.execute(
-        """
+        f"""
         SELECT r.id, r.name_with_owner, r.description, r.primary_language,
                r.is_archived, r.pushed_at, r.stargazer_count, r.readme_path,
                GROUP_CONCAT(t.topic_name, ', ') AS topics
         FROM repositories r
         LEFT JOIN topics t ON t.repo_id = r.id
         LEFT JOIN analysis a ON a.repo_id = r.id
-        WHERE a.repo_id IS NULL
+        WHERE {where}
         GROUP BY r.id
         ORDER BY r.starred_at DESC
         LIMIT ?
