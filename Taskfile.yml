@@ -24,6 +24,11 @@ tasks:
     cmds:
       - uv run starred sync --full
 
+  refresh-stars:
+    desc: "Refresh stars, archived flag and dates (usage: task refresh-stars [BATCH_SIZE=100])"
+    cmds:
+      - uv run starred refresh-stars {{if .BATCH_SIZE}}--batch-size {{.BATCH_SIZE}}{{end}}
+
   fetch-readme:
     desc: "Fetch README files (usage: task fetch-readme [LIMIT=50] [CONCURRENCY=10])"
     cmds:
