@@ -8,6 +8,7 @@ from starred.db import (
     get_repos_for_readme,
     get_repos_without_analysis_with_readme,
     open_db,
+    update_repo_metadata,
     upsert_analysis,
     upsert_repo,
 )
@@ -35,6 +36,7 @@ class TestUpsertRepo:
         assert row["primary_language"] == "Python"
         assert row["stargazer_count"] == 42
         assert row["is_archived"] == 0
+        assert row["created_at"] == "2023-01-10T12:00:00+00:00"
 
     def test_upsert_deduplication(self, db, sample_repo):
         """Inserting the same repo twice should not create a duplicate row."""
@@ -53,6 +55,7 @@ class TestUpsertRepo:
             description="Updated description",
             topics=["updated"],
             is_archived=True,
+            created_at=sample_repo.created_at,
             pushed_at=sample_repo.pushed_at,
             url=sample_repo.url,
             primary_language="Rust",
@@ -87,6 +90,7 @@ class TestUpsertRepo:
             description=sample_repo.description,
             topics=["new-topic"],
             is_archived=sample_repo.is_archived,
+            created_at=sample_repo.created_at,
             pushed_at=sample_repo.pushed_at,
             url=sample_repo.url,
             primary_language=sample_repo.primary_language,
@@ -124,6 +128,7 @@ class TestGetLastStarredAt:
             description=None,
             topics=[],
             is_archived=False,
+            created_at=None,
             pushed_at=None,
             url="https://github.com/octocat/older-repo",
             primary_language=None,
@@ -173,6 +178,7 @@ class TestGetReposForReadme:
                 description=None,
                 topics=[],
                 is_archived=False,
+                created_at=None,
                 pushed_at=None,
                 url=f"https://github.com/owner/repo-{i}",
                 primary_language=None,
@@ -266,3 +272,54 @@ class TestGetReposWithoutAnalysisWithReadme:
 
         result = get_repos_without_analysis_with_readme(db, limit=20, force=True)
         assert result == []
+
+
+class TestUpdateRepoMetadata:
+    def test_updates_stars_archived_and_dates(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        update_repo_metadata(
+            db,
+            repo_id,
+            stargazer_count=999,
+            is_archived=True,
+            created_at=datetime(2020, 5, 1, tzinfo=UTC),
+            pushed_at=datetime(2025, 6, 2, tzinfo=UTC),
+        )
+
+        row = db.execute("SELECT * FROM repositories WHERE id = ?", (repo_id,)).fetchone()
+        assert row["stargazer_count"] == 999
+        assert row["is_archived"] == 1
+        assert row["created_at"] == "2020-05-01T00:00:00+00:00"
+        assert row["pushed_at"] == "2025-06-02T00:00:00+00:00"
+
+    def test_null_dates_are_stored_as_null(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        update_repo_metadata(
+            db,
+            repo_id,
+            stargazer_count=1,
+            is_archived=False,
+            created_at=None,
+            pushed_at=None,
+        )
+
+        row = db.execute("SELECT * FROM repositories WHERE id = ?", (repo_id,)).fetchone()
+        assert row["created_at"] is None
+        assert row["pushed_at"] is None
+
+    def test_refreshes_synced_at(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        db.execute("UPDATE repositories SET synced_at = ? WHERE id = ?", ("2000-01-01", repo_id))
+
+        update_repo_metadata(
+            db,
+            repo_id,
+            stargazer_count=5,
+            is_archived=False,
+            created_at=None,
+            pushed_at=None,
+        )
+        after = db.execute(
+            "SELECT synced_at FROM repositories WHERE id = ?", (repo_id,)
+        ).fetchone()["synced_at"]
+        assert after != "2000-01-01"

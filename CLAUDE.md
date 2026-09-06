@@ -5,7 +5,7 @@
 CLI tool (`starred`) that manages a curated list of GitHub starred repositories:
 
 1. Syncs repos via the **GitHub GraphQL API** into a local SQLite database (`starred.db`)
-2. Refreshes stargazer counts in batch (`refresh-stars`, lightweight GraphQL sync)
+2. Refreshes stars, archived flag, created_at and pushed_at in batch (`refresh-stars`, lightweight GraphQL sync)
 3. Downloads READMEs via the **GitHub REST API** (async, concurrent with httpx)
 4. Analyzes each repo with **Claude** (claude-agent-sdk) to produce a 1-5 interest score
 5. Lists repos with filters (language, topic, score, archived)
@@ -16,7 +16,7 @@ CLI tool (`starred`) that manages a curated list of GitHub starred repositories:
 ```
 starred/
   cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, list, export-obsidian
-  client.py    # GitHub GraphQL client: fetch_starred() generator + fetch_stargazer_counts() (httpx sync)
+  client.py    # GitHub GraphQL client: fetch_starred() generator + fetch_repo_metadata() (httpx sync)
   readme.py    # GitHub REST client: fetch_all_async() (httpx async, semaphore)
   analyze.py   # Claude analysis via claude-agent-sdk: analyze_repo() / _analyze_one()
   db.py        # SQLite layer: open_db(), upsert_repo(), upsert_analysis(), queries
@@ -58,6 +58,7 @@ Copy `.env.example` to `.env`. Variables read by the CLI and the Taskfile:
 task                      # list all tasks
 task sync                 # incremental sync
 task sync:full            # full reload
+task refresh-stars        # refresh stars, archived flag and dates
 task fetch-readme LIMIT=50 CONCURRENCY=10
 task analyze LIMIT=20
 task export               # export to Obsidian
@@ -96,7 +97,7 @@ sqlite3 starred.db ".schema"
 - No unnecessary docstrings. Only add a docstring if it genuinely explains non-obvious behavior.
 - All SQLite writes use `INSERT ... ON CONFLICT DO UPDATE` (upsert pattern). Never use separate SELECT + INSERT/UPDATE sequences.
 - HTTP I/O for bulk operations (READMEs) is async using `httpx.AsyncClient` with a `asyncio.Semaphore` for concurrency control.
-- The GraphQL sync (`client.py`) is synchronous, one page at a time, not bulk. `fetch_stargazer_counts()` is the exception: it batches repos with aliased GraphQL queries.
+- The GraphQL sync (`client.py`) is synchronous, one page at a time, not bulk. `fetch_repo_metadata()` is the exception: it batches repos with aliased GraphQL queries.
 - Claude analysis runs synchronously from the CLI but the underlying `_analyze_one()` is async; it is called via `asyncio.run()` inside `analyze_repo()`.
 - SQLite connections are managed with the `open_db()` context manager (commits on success, rolls back on error).
 - Schema migrations are applied via `_migrate()` in `db.py` using `PRAGMA table_info`.

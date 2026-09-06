@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS repositories (
     description       TEXT,
     url               TEXT    NOT NULL,
     is_archived       INTEGER NOT NULL DEFAULT 0,
+    created_at        TEXT,
     pushed_at         TEXT,
     starred_at        TEXT    NOT NULL,
     primary_language  TEXT,
@@ -46,6 +47,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(repositories)")}
     if "readme_path" not in columns:
         conn.execute("ALTER TABLE repositories ADD COLUMN readme_path TEXT")
+    if "created_at" not in columns:
+        conn.execute("ALTER TABLE repositories ADD COLUMN created_at TEXT")
 
     analysis_columns = {row[1] for row in conn.execute("PRAGMA table_info(analysis)")}
     if "tags" not in analysis_columns:
@@ -74,13 +77,14 @@ def upsert_repo(conn: sqlite3.Connection, repo: StarredRepo) -> int:
     conn.execute(
         """
         INSERT INTO repositories
-            (name_with_owner, description, url, is_archived, pushed_at,
+            (name_with_owner, description, url, is_archived, created_at, pushed_at,
              starred_at, primary_language, stargazer_count, synced_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(name_with_owner) DO UPDATE SET
             description      = excluded.description,
             url              = excluded.url,
             is_archived      = excluded.is_archived,
+            created_at       = excluded.created_at,
             pushed_at        = excluded.pushed_at,
             starred_at       = excluded.starred_at,
             primary_language = excluded.primary_language,
@@ -92,6 +96,7 @@ def upsert_repo(conn: sqlite3.Connection, repo: StarredRepo) -> int:
             repo.description,
             repo.url,
             int(repo.is_archived),
+            repo.created_at.isoformat() if repo.created_at else None,
             repo.pushed_at.isoformat() if repo.pushed_at else None,
             repo.starred_at.isoformat(),
             repo.primary_language,
@@ -168,11 +173,33 @@ def get_all_repo_names(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute("SELECT id, name_with_owner FROM repositories ORDER BY id").fetchall()
 
 
-def update_stargazer_count(conn: sqlite3.Connection, repo_id: int, count: int) -> None:
+def update_repo_metadata(
+    conn: sqlite3.Connection,
+    repo_id: int,
+    stargazer_count: int,
+    is_archived: bool,
+    created_at: datetime | None,
+    pushed_at: datetime | None,
+) -> None:
     now = datetime.now(UTC).isoformat()
     conn.execute(
-        "UPDATE repositories SET stargazer_count = ?, synced_at = ? WHERE id = ?",
-        (count, now, repo_id),
+        """
+        UPDATE repositories
+        SET stargazer_count = ?,
+            is_archived     = ?,
+            created_at      = ?,
+            pushed_at       = ?,
+            synced_at       = ?
+        WHERE id = ?
+        """,
+        (
+            stargazer_count,
+            int(is_archived),
+            created_at.isoformat() if created_at else None,
+            pushed_at.isoformat() if pushed_at else None,
+            now,
+            repo_id,
+        ),
     )
 
 

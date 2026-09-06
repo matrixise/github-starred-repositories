@@ -11,7 +11,7 @@ from rich.table import Table
 from tqdm import tqdm
 
 from .analyze import analyze_repo
-from .client import fetch_stargazer_counts, fetch_starred
+from .client import fetch_repo_metadata, fetch_starred
 from .db import (
     get_all_repo_names,
     get_last_starred_at,
@@ -21,7 +21,7 @@ from .db import (
     open_db,
     set_meta,
     set_readme_path,
-    update_stargazer_count,
+    update_repo_metadata,
     upsert_analysis,
     upsert_repo,
 )
@@ -91,7 +91,7 @@ def sync(full: bool, db_path: Path):
 @click.option("--batch-size", default=100, show_default=True, help="Repos per GraphQL request")
 @click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
 def refresh_stars(batch_size: int, db_path: Path):
-    """Refresh stargazer counts for all repositories (lightweight sync)."""
+    """Refresh stars, archived flag and dates for all repositories (lightweight sync)."""
     if not db_path.exists():
         console.print(
             f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
@@ -105,7 +105,7 @@ def refresh_stars(batch_size: int, db_path: Path):
             return
 
         console.print(
-            f"[dim]Refreshing star counts for {len(rows)} repositories "
+            f"[dim]Refreshing metadata for {len(rows)} repositories "
             f"(batch size={batch_size})...[/dim]\n"
         )
 
@@ -113,11 +113,18 @@ def refresh_stars(batch_size: int, db_path: Path):
         updated = missing = 0
         try:
             with tqdm(total=len(repos), unit="repo", dynamic_ncols=True) as bar:
-                for repo_id, count in fetch_stargazer_counts(repos, batch_size=batch_size):
-                    if count is None:
+                for repo_id, meta in fetch_repo_metadata(repos, batch_size=batch_size):
+                    if meta is None:
                         missing += 1
                     else:
-                        update_stargazer_count(conn, repo_id, count)
+                        update_repo_metadata(
+                            conn,
+                            repo_id,
+                            meta.stargazer_count,
+                            meta.is_archived,
+                            meta.created_at,
+                            meta.pushed_at,
+                        )
                         updated += 1
                     bar.set_postfix(updated=updated, missing=missing)
                     bar.update(1)
