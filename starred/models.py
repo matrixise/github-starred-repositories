@@ -9,6 +9,7 @@ class StarredRepo:
     description: str | None
     topics: list[str]
     is_archived: bool
+    created_at: datetime | None
     pushed_at: datetime | None
     url: str
     primary_language: str | None

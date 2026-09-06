@@ -2,6 +2,7 @@ import os
 import subprocess
 from collections.abc import Generator
 from datetime import datetime
+from typing import NamedTuple
 
 import httpx
 
@@ -20,6 +21,7 @@ query StarredRepos($cursor: String) {
           description
           url
           isArchived
+          createdAt
           pushedAt
           stargazerCount
           primaryLanguage { name }
@@ -77,6 +79,7 @@ def _parse_edge(edge: dict) -> StarredRepo:
         description=node.get("description"),
         topics=topics,
         is_archived=node["isArchived"],
+        created_at=_parse_dt_optional(node.get("createdAt")),
         pushed_at=_parse_dt_optional(node.get("pushedAt")),
         url=node["url"],
         primary_language=lang["name"] if lang else None,
@@ -84,12 +87,31 @@ def _parse_edge(edge: dict) -> StarredRepo:
     )
 
 
-def fetch_stargazer_counts(
+REFRESH_FIELDS = "{ stargazerCount isArchived createdAt pushedAt }"
+
+
+class RepoMetadata(NamedTuple):
+    stargazer_count: int
+    is_archived: bool
+    created_at: datetime | None
+    pushed_at: datetime | None
+
+
+def _parse_metadata(node: dict) -> RepoMetadata:
+    return RepoMetadata(
+        stargazer_count=node["stargazerCount"],
+        is_archived=node["isArchived"],
+        created_at=_parse_dt_optional(node.get("createdAt")),
+        pushed_at=_parse_dt_optional(node.get("pushedAt")),
+    )
+
+
+def fetch_repo_metadata(
     repos: list[tuple[int, str]],
     batch_size: int = 100,
-) -> Generator[tuple[int, int | None], None, None]:
+) -> Generator[tuple[int, RepoMetadata | None], None, None]:
     """
-    Yield (repo_id, stargazer_count) for each repo in `repos`.
+    Yield (repo_id, metadata) for each repo in `repos`.
 
     Uses batched GraphQL aliases (one request per `batch_size` repos).
     Yields `None` for repos that no longer exist (renamed/deleted).
@@ -109,7 +131,7 @@ def fetch_stargazer_counts(
             for idx, (_repo_id, name_with_owner) in enumerate(batch):
                 owner, name = name_with_owner.split("/", 1)
                 aliases.append(
-                    f"r{idx}: repository(owner: $o{idx}, name: $n{idx}) {{ stargazerCount }}"
+                    f"r{idx}: repository(owner: $o{idx}, name: $n{idx}) {REFRESH_FIELDS}"
                 )
                 var_defs.append(f"$o{idx}: String!, $n{idx}: String!")
                 variables[f"o{idx}"] = owner
@@ -133,7 +155,7 @@ def fetch_stargazer_counts(
                 if node is None:
                     yield repo_id, None
                 else:
-                    yield repo_id, node["stargazerCount"]
+                    yield repo_id, _parse_metadata(node)
 
 
 def fetch_starred(

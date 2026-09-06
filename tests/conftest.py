@@ -24,6 +24,7 @@ def sample_repo() -> StarredRepo:
         description="A test repository",
         topics=["python", "testing"],
         is_archived=False,
+        created_at=datetime(2023, 1, 10, 12, 0, 0, tzinfo=UTC),
         pushed_at=datetime(2024, 2, 1, 8, 0, 0, tzinfo=UTC),
         url="https://github.com/octocat/hello-world",
         primary_language="Python",
