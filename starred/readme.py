@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 
-from .client import _get_token
+from .auth import get_token
 
 GITHUB_REST_URL = "https://api.github.com/repos/{name_with_owner}/readme"
 
@@ -51,7 +51,7 @@ async def fetch_all_async(
     Yields (row, saved_path_or_None, error_or_None) as each completes.
     saved_path is None when the repo has no README (404).
     """
-    token = _get_token()
+    token = get_token()
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github.raw+json",

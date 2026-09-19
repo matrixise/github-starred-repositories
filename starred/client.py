@@ -1,11 +1,10 @@
-import os
-import subprocess
 from collections.abc import Generator
 from datetime import datetime
 from typing import NamedTuple
 
 import httpx
 
+from .auth import get_token
 from .models import StarredRepo
 
 GITHUB_GRAPHQL_URL = "https://api.github.com/graphql"
@@ -38,25 +37,6 @@ query StarredRepos($cursor: String) {
   }
 }
 """
-
-
-def _get_token() -> str:
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if token:
-        return token
-    try:
-        result = subprocess.run(
-            ["gh", "auth", "token"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        token = result.stdout.strip()
-        if token:
-            return token
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pass
-    raise RuntimeError("No GitHub token found. Set GITHUB_TOKEN or run `gh auth login`.")
 
 
 def _parse_dt(value: str) -> datetime:
@@ -116,7 +96,7 @@ def fetch_repo_metadata(
     Uses batched GraphQL aliases (one request per `batch_size` repos).
     Yields `None` for repos that no longer exist (renamed/deleted).
     """
-    token = _get_token()
+    token = get_token()
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -168,7 +148,7 @@ def fetch_starred(
     If stop_at is provided, stops when starredAt <= stop_at
     (used for incremental sync).
     """
-    token = _get_token()
+    token = get_token()
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
