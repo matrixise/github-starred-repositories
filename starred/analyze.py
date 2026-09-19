@@ -76,8 +76,7 @@ def _normalize_tag(tag: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", tag.strip().lower()).strip("-")
 
 
-async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str, str]:
-    """Returns (repo_id, score, summary, tags) where tags is a comma-separated string."""
+async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str, list[str]]:
     prompt = _build_prompt(row)
     raw = ""
 
@@ -97,7 +96,7 @@ async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str, str]:
         raise ValueError(f"Unexpected Claude response format: {raw!r}")
     score = max(1, min(5, int(data["score"])))
     summary = str(data["summary"])
-    tags = ", ".join(_normalize_tag(str(t)) for t in data["tags"] if str(t).strip())
+    tags = [tag for t in data["tags"] if (tag := _normalize_tag(str(t)))]
     return row["id"], score, summary, tags
 
 
@@ -111,5 +110,5 @@ def _is_rate_limit(exc: BaseException) -> bool:
     stop=stop_after_attempt(4),
     reraise=True,
 )
-def analyze_repo(row: sqlite3.Row) -> tuple[int, int, str, str]:
+def analyze_repo(row: sqlite3.Row) -> tuple[int, int, str, list[str]]:
     return asyncio.run(_analyze_one(row))

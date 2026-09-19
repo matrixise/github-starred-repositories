@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,6 +41,12 @@ CREATE TABLE IF NOT EXISTS analysis (
     summary     TEXT    NOT NULL,
     analyzed_at TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS analysis_tags (
+    repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    tag     TEXT    NOT NULL,
+    PRIMARY KEY (repo_id, tag)
+);
 """
 
 
@@ -48,6 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_repositories_language ON repositories(primary_lan
 CREATE INDEX IF NOT EXISTS idx_repositories_starred  ON repositories(starred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_repositories_readme   ON repositories(readme_path);
 CREATE INDEX IF NOT EXISTS idx_analysis_score        ON analysis(score);
+CREATE INDEX IF NOT EXISTS idx_analysis_tags_tag     ON analysis_tags(tag);
 CREATE INDEX IF NOT EXISTS idx_topics_name           ON topics(topic_name);
 """
 
@@ -61,8 +69,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE repositories ADD COLUMN created_at TEXT")
 
     analysis_columns = {row[1] for row in conn.execute("PRAGMA table_info(analysis)")}
-    if "tags" not in analysis_columns:
-        conn.execute("ALTER TABLE analysis ADD COLUMN tags TEXT")
+    if "tags" in analysis_columns:
+        # Tags used to live in a comma-separated column; move them to analysis_tags.
+        conn.executemany(
+            "INSERT OR IGNORE INTO analysis_tags (repo_id, tag) VALUES (?, ?)",
+            [
+                (row["repo_id"], tag)
+                for row in conn.execute(
+                    "SELECT repo_id, tags FROM analysis WHERE tags IS NOT NULL AND TRIM(tags) != ''"
+                )
+                for tag in (t.strip() for t in row["tags"].split(","))
+                if tag
+            ],
+        )
+        conn.execute("ALTER TABLE analysis DROP COLUMN tags")
 
 
 @contextmanager
@@ -142,21 +162,38 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 
 def upsert_analysis(
-    conn: sqlite3.Connection, repo_id: int, score: int, summary: str, tags: str | None = None
+    conn: sqlite3.Connection,
+    repo_id: int,
+    score: int,
+    summary: str,
+    tags: Sequence[str] = (),
 ) -> None:
     now = datetime.now(UTC).isoformat()
     conn.execute(
         """
-        INSERT INTO analysis (repo_id, score, summary, tags, analyzed_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO analysis (repo_id, score, summary, analyzed_at)
+        VALUES (?, ?, ?, ?)
         ON CONFLICT(repo_id) DO UPDATE SET
             score       = excluded.score,
             summary     = excluded.summary,
-            tags        = excluded.tags,
             analyzed_at = excluded.analyzed_at
         """,
-        (repo_id, score, summary, tags, now),
+        (repo_id, score, summary, now),
     )
+    conn.execute("DELETE FROM analysis_tags WHERE repo_id = ?", (repo_id,))
+    conn.executemany(
+        "INSERT OR IGNORE INTO analysis_tags (repo_id, tag) VALUES (?, ?)",
+        [(repo_id, t) for t in tags if t],
+    )
+
+
+def get_tags(conn: sqlite3.Connection, repo_id: int) -> list[str]:
+    return [
+        row["tag"]
+        for row in conn.execute(
+            "SELECT tag FROM analysis_tags WHERE repo_id = ? ORDER BY tag", (repo_id,)
+        )
+    ]
 
 
 def get_repos_for_readme(
@@ -218,14 +255,17 @@ def get_repos_for_export(conn: sqlite3.Connection, min_score: int) -> list[sqlit
     return conn.execute(
         """
         SELECT r.name_with_owner, r.description, r.url, r.primary_language,
-               r.starred_at, r.pushed_at, r.stargazer_count, r.is_archived,
+               r.starred_at, r.created_at, r.pushed_at, r.stargazer_count, r.is_archived,
                a.score, a.summary,
-               GROUP_CONCAT(DISTINCT t.topic_name) AS topics
+               (SELECT GROUP_CONCAT(topic_name, ', ')
+                  FROM (SELECT topic_name FROM topics WHERE repo_id = r.id ORDER BY topic_name)
+               ) AS topics,
+               (SELECT GROUP_CONCAT(tag, ', ')
+                  FROM (SELECT tag FROM analysis_tags WHERE repo_id = r.id ORDER BY tag)
+               ) AS tags
         FROM repositories r
         JOIN analysis a ON a.repo_id = r.id
-        LEFT JOIN topics t ON t.repo_id = r.id
         WHERE a.score >= ?
-        GROUP BY r.id
         ORDER BY a.score DESC, r.stargazer_count DESC
         """,
         (min_score,),
@@ -235,7 +275,11 @@ def get_repos_for_export(conn: sqlite3.Connection, min_score: int) -> list[sqlit
 def get_repos_without_analysis_with_readme(
     conn: sqlite3.Connection, limit: int, force: bool = False
 ) -> list[sqlite3.Row]:
-    where = "a.repo_id IS NULL OR a.tags IS NULL" if force else "a.repo_id IS NULL"
+    where = (
+        "a.repo_id IS NULL OR NOT EXISTS (SELECT 1 FROM analysis_tags WHERE repo_id = r.id)"
+        if force
+        else "a.repo_id IS NULL"
+    )
     return conn.execute(
         f"""
         SELECT r.id, r.name_with_owner, r.description, r.primary_language,

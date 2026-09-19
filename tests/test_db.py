@@ -7,6 +7,7 @@ from starred.db import (
     get_last_starred_at,
     get_repos_for_readme,
     get_repos_without_analysis_with_readme,
+    get_tags,
     open_db,
     update_repo_metadata,
     upsert_analysis,
@@ -222,33 +223,43 @@ class TestUpsertAnalysis:
         parsed = datetime.fromisoformat(row["analyzed_at"])
         assert parsed is not None
 
-    def test_tags_stored(self, db, sample_repo):
+    def test_tags_stored_in_their_own_table(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
-        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags="cli-tool, automation")
+        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags=["cli-tool", "automation"])
 
-        row = db.execute("SELECT tags FROM analysis WHERE repo_id = ?", (repo_id,)).fetchone()
-        assert row["tags"] == "cli-tool, automation"
+        assert get_tags(db, repo_id) == ["automation", "cli-tool"]
 
-    def test_tags_default_to_none(self, db, sample_repo):
+    def test_tags_default_to_empty(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
         upsert_analysis(db, repo_id, score=4, summary="Great tool")
 
-        row = db.execute("SELECT tags FROM analysis WHERE repo_id = ?", (repo_id,)).fetchone()
-        assert row["tags"] is None
+        assert get_tags(db, repo_id) == []
 
     def test_tags_overwritten_on_upsert(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
-        upsert_analysis(db, repo_id, score=2, summary="First analysis", tags="old-tag")
-        upsert_analysis(db, repo_id, score=5, summary="Updated analysis", tags="new-tag")
+        upsert_analysis(db, repo_id, score=2, summary="First analysis", tags=["old-tag"])
+        upsert_analysis(db, repo_id, score=5, summary="Updated analysis", tags=["new-tag"])
 
-        row = db.execute("SELECT tags FROM analysis WHERE repo_id = ?", (repo_id,)).fetchone()
-        assert row["tags"] == "new-tag"
+        assert get_tags(db, repo_id) == ["new-tag"]
+
+    def test_duplicate_tags_are_collapsed(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        upsert_analysis(db, repo_id, score=4, summary="x", tags=["cli", "cli", ""])
+
+        assert get_tags(db, repo_id) == ["cli"]
+
+    def test_tags_are_removed_with_the_repo(self, db, sample_repo):
+        repo_id = upsert_repo(db, sample_repo)
+        upsert_analysis(db, repo_id, score=4, summary="x", tags=["cli"])
+        db.execute("DELETE FROM repositories WHERE id = ?", (repo_id,))
+
+        assert get_tags(db, repo_id) == []
 
 
 class TestGetReposWithoutAnalysisWithReadme:
     def test_excludes_analyzed_repos_by_default(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
-        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags="cli-tool")
+        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags=["cli-tool"])
 
         result = get_repos_without_analysis_with_readme(db, limit=20)
         assert result == []
@@ -268,7 +279,7 @@ class TestGetReposWithoutAnalysisWithReadme:
 
     def test_force_excludes_repos_already_tagged(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
-        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags="cli-tool")
+        upsert_analysis(db, repo_id, score=4, summary="Great tool", tags=["cli-tool"])
 
         result = get_repos_without_analysis_with_readme(db, limit=20, force=True)
         assert result == []
