@@ -16,9 +16,10 @@ CLI tool (`starred`) that manages a curated list of GitHub starred repositories:
 ```
 starred/
   cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, list, export-obsidian
+  auth.py      # GitHub token resolution: get_token() (GITHUB_TOKEN, then `gh auth token`)
   client.py    # GitHub GraphQL client: fetch_starred() generator + fetch_repo_metadata() (httpx sync)
   readme.py    # GitHub REST client: fetch_all_async() (httpx async, semaphore)
-  analyze.py   # Claude analysis via claude-agent-sdk: analyze_repo() / _analyze_one()
+  analyze.py   # Claude analysis via claude-agent-sdk: analyze_all_async() / _analyze_one()
   db.py        # SQLite layer: open_db(), upsert_repo(), upsert_analysis(), queries
   models.py    # StarredRepo dataclass
 tests/         # pytest suite (conftest.py + test_analyze/test_client/test_db/test_readme)
@@ -29,8 +30,10 @@ prek.toml      # prek (pre-commit) hooks: ruff, ruff-format, ty, gitleaks
 Entry point: `starred.cli:main` (registered in `pyproject.toml`).
 
 Obsidian notes are written to `<vault>/Sources/GitHub Stars/`, one file per repo
-(`Owner - repo.md`), with frontmatter (title, url, language, topics, score, summary,
-starred_at, tags). `export-obsidian --prune` deletes notes that no longer match.
+(`Owner - repo.md`), with frontmatter written by `python-frontmatter` (title, url, language,
+topics, score, summary, starred_at, created_at, pushed_at, stars, archived, tags).
+`export-obsidian --prune` only deletes notes carrying the export tag; `--dry-run` reports
+without writing.
 
 ## Tech Stack
 
@@ -60,7 +63,7 @@ task sync                 # incremental sync
 task sync:full            # full reload
 task refresh-stars        # refresh stars, archived flag and dates
 task fetch-readme LIMIT=50 CONCURRENCY=10
-task analyze LIMIT=20
+task analyze LIMIT=20 ANALYZE_CONCURRENCY=3   # defaults: LIMIT=20, ANALYZE_CONCURRENCY=3
 task export               # export to Obsidian
 task export:prune         # export + remove orphan notes
 task update               # full pipeline: sync, fetch-readme, analyze
@@ -71,9 +74,9 @@ uv run starred sync
 uv run starred sync --full
 uv run starred refresh-stars --batch-size 100
 uv run starred fetch-readme --limit 10 --concurrency 5
-uv run starred analyze --limit 5
+uv run starred analyze --limit 5 --concurrency 3
 uv run starred list --min-score 4 --description
-uv run starred export-obsidian --vault ~/Documents/MyVault --min-score 4 --prune
+uv run starred export-obsidian --vault ~/Documents/MyVault --min-score 4 --prune --dry-run
 
 # Quality gates (same as CI)
 uv run pytest tests/ -v
@@ -87,6 +90,7 @@ sqlite3 starred.db ".tables"
 sqlite3 starred.db "SELECT name_with_owner, score, summary FROM repositories JOIN analysis ON analysis.repo_id = repositories.id ORDER BY score DESC LIMIT 20;"
 sqlite3 starred.db "SELECT COUNT(*) FROM repositories WHERE readme_path IS NOT NULL;"
 sqlite3 starred.db "SELECT COUNT(*) FROM analysis;"
+sqlite3 starred.db "SELECT tag, COUNT(*) FROM analysis_tags GROUP BY tag ORDER BY 2 DESC LIMIT 20;"
 
 # Check schema
 sqlite3 starred.db ".schema"
@@ -98,7 +102,7 @@ sqlite3 starred.db ".schema"
 - All SQLite writes use `INSERT ... ON CONFLICT DO UPDATE` (upsert pattern). Never use separate SELECT + INSERT/UPDATE sequences.
 - HTTP I/O for bulk operations (READMEs) is async using `httpx.AsyncClient` with a `asyncio.Semaphore` for concurrency control.
 - The GraphQL sync (`client.py`) is synchronous, one page at a time, not bulk. `fetch_repo_metadata()` is the exception: it batches repos with aliased GraphQL queries.
-- Claude analysis runs synchronously from the CLI but the underlying `_analyze_one()` is async; it is called via `asyncio.run()` inside `analyze_repo()`.
+- Claude analysis runs concurrently: `analyze_all_async()` fans out `_analyze_one()` behind an `asyncio.Semaphore` (default 3) and the CLI drives it with a single `asyncio.run()`.
 - SQLite connections are managed with the `open_db()` context manager (commits on success, rolls back on error).
 - Schema migrations are applied via `_migrate()` in `db.py` using `PRAGMA table_info`.
 - Score is always clamped to [1, 5] with `max(1, min(5, ...))` after parsing Claude's JSON response.
