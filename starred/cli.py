@@ -301,6 +301,18 @@ def _build_note(row: sqlite3.Row, tag: str) -> str:
     return frontmatter.dumps(frontmatter.Post(body, **meta)) + "\n"
 
 
+def _is_managed_note(path: Path, tag: str) -> bool:
+    """True when the note carries our export tag, i.e. it was written by this command."""
+    try:
+        post = frontmatter.load(path)
+    except Exception:
+        return False
+    tags = post.metadata.get("tags")
+    if isinstance(tags, str):
+        tags = _split_csv(tags)
+    return isinstance(tags, list) and tag in tags
+
+
 @main.command("export-obsidian")
 @click.option("--vault", required=True, type=Path, help="Path to your Obsidian vault")
 @click.option("--min-score", default=4, show_default=True, help="Minimum interest score to export")
@@ -308,8 +320,13 @@ def _build_note(row: sqlite3.Row, tag: str) -> str:
 @click.option(
     "--prune", is_flag=True, default=False, help="Delete notes for repos no longer meeting criteria"
 )
+@click.option(
+    "--dry-run", is_flag=True, default=False, help="Report what would change without writing"
+)
 @click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path: Path):
+def export_obsidian(
+    vault: Path, min_score: int, tag: str, prune: bool, dry_run: bool, db_path: Path
+):
     """Export high-scoring repositories as lightweight Obsidian notes."""
     if not db_path.exists():
         console.print(
@@ -318,7 +335,8 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
         raise SystemExit(1)
 
     dest_dir = vault / "Sources" / "GitHub Stars"
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    if not dry_run:
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
     with open_db(db_path) as conn:
         rows = get_repos_for_export(conn, min_score)
@@ -330,7 +348,7 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
         return
 
     console.print(f"[dim]Exporting {len(rows)} repositories to [cyan]{dest_dir}[/cyan]...[/dim]\n")
-    created = updated = unchanged = pruned = 0
+    created = updated = unchanged = pruned = skipped_prune = 0
 
     valid_filenames: set[str] = set()
 
@@ -346,20 +364,28 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
             if existing == note:
                 unchanged += 1
                 continue
-            note_path.write_text(note, encoding="utf-8")
+            if not dry_run:
+                note_path.write_text(note, encoding="utf-8")
             console.print(f"  [yellow]↺[/yellow] {filename} [dim](updated)[/dim]")
             updated += 1
         else:
-            note_path.write_text(note, encoding="utf-8")
+            if not dry_run:
+                note_path.write_text(note, encoding="utf-8")
             console.print(f"  [green]✓[/green] {filename} [dim](created)[/dim]")
             created += 1
 
-    if prune:
-        for existing_file in dest_dir.glob("*.md"):
-            if existing_file.name not in valid_filenames:
+    if prune and dest_dir.exists():
+        for existing_file in sorted(dest_dir.glob("*.md")):
+            if existing_file.name in valid_filenames:
+                continue
+            if not _is_managed_note(existing_file, tag):
+                console.print(f"  [dim]skipped {existing_file.name} (not tagged {tag})[/dim]")
+                skipped_prune += 1
+                continue
+            if not dry_run:
                 existing_file.unlink()
-                console.print(f"  [red]✗[/red] {existing_file.name} [dim](pruned)[/dim]")
-                pruned += 1
+            console.print(f"  [red]✗[/red] {existing_file.name} [dim](pruned)[/dim]")
+            pruned += 1
 
     parts = []
     if created:
@@ -370,7 +396,10 @@ def export_obsidian(vault: Path, min_score: int, tag: str, prune: bool, db_path:
         parts.append(f"[dim]{unchanged} unchanged[/dim]")
     if pruned:
         parts.append(f"[red]{pruned} pruned[/red]")
-    console.print("\n[bold]Done.[/bold] " + ", ".join(parts) + ".")
+    if skipped_prune:
+        parts.append(f"[dim]{skipped_prune} foreign notes kept[/dim]")
+    prefix = "[bold]Dry run.[/bold]" if dry_run else "[bold]Done.[/bold]"
+    console.print(f"\n{prefix} " + ", ".join(parts) + ".")
 
 
 @main.command("list")
