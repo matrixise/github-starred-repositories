@@ -184,6 +184,8 @@ def fetch_readme_cmd(
         asyncio.run(run())
 
     console.print(f"\n[bold]Done.[/bold] {ok} fetched, {skipped} without README, {errors} errors.")
+    if errors:
+        raise SystemExit(1)
 
 
 @main.command()
