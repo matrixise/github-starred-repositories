@@ -1,8 +1,11 @@
+import asyncio
 import json
+import sqlite3
 
 import pytest
 
-from starred.analyze import _build_prompt, _extract_json, _normalize_tag
+from starred import analyze as analyze_mod
+from starred.analyze import AnalysisResult, _build_prompt, _extract_json, _normalize_tag
 
 
 class TestExtractJson:
@@ -99,3 +102,65 @@ class TestBuildPrompt:
     def test_archived_no(self, sample_row_dict):
         prompt = _build_prompt(sample_row_dict)
         assert "Archived: no" in prompt
+
+
+class TestAnalyzeAllAsync:
+    @staticmethod
+    def _rows(n: int) -> list[sqlite3.Row]:
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        return [
+            conn.execute("SELECT ? AS id, ? AS name_with_owner", (i, f"owner/repo{i}")).fetchone()
+            for i in range(n)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_yields_one_result_per_row(self, monkeypatch):
+        async def fake(row):
+            return AnalysisResult(row["id"], 4, "ok", ["tag"])
+
+        monkeypatch.setattr(analyze_mod, "_analyze_one", fake)
+        out = [r async for r in analyze_mod.analyze_all_async(self._rows(5), concurrency=2)]
+
+        assert len(out) == 5
+        assert {row["id"] for row, _, _ in out} == {0, 1, 2, 3, 4}
+        assert all(error is None and result is not None for _, result, error in out)
+
+    @pytest.mark.asyncio
+    async def test_failures_are_reported_not_raised(self, monkeypatch):
+        async def fake(row):
+            if row["id"] == 1:
+                raise ValueError("boom")
+            return AnalysisResult(row["id"], 3, "ok", [])
+
+        monkeypatch.setattr(analyze_mod, "_analyze_one", fake)
+        out = [r async for r in analyze_mod.analyze_all_async(self._rows(3), concurrency=3)]
+
+        failures = [(row, error) for row, _, error in out if error is not None]
+        assert len(failures) == 1
+        assert failures[0][0]["id"] == 1
+        assert str(failures[0][1]) == "boom"
+        assert sum(1 for _, result, _ in out if result is not None) == 2
+
+    @pytest.mark.asyncio
+    async def test_concurrency_limit_is_honoured(self, monkeypatch):
+        running = 0
+        peak = 0
+
+        async def fake(row):
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.01)
+            running -= 1
+            return AnalysisResult(row["id"], 4, "ok", [])
+
+        monkeypatch.setattr(analyze_mod, "_analyze_one", fake)
+        [r async for r in analyze_mod.analyze_all_async(self._rows(8), concurrency=2)]
+
+        assert peak <= 2
+
+    @pytest.mark.asyncio
+    async def test_empty_input(self, monkeypatch):
+        out = [r async for r in analyze_mod.analyze_all_async([], concurrency=2)]
+        assert out == []

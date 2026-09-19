@@ -1,7 +1,6 @@
 import asyncio
 import re as _re
 import sqlite3
-import time
 from pathlib import Path
 
 import click
@@ -10,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 from tqdm import tqdm
 
-from .analyze import analyze_repo
+from .analyze import analyze_all_async
 from .client import fetch_repo_metadata, fetch_starred
 from .db import (
     get_all_repo_names,
@@ -190,19 +189,30 @@ def fetch_readme_cmd(
 @main.command()
 @click.option("--limit", default=20, show_default=True, help="Number of repos to analyze per run")
 @click.option(
+    "--concurrency", default=3, show_default=True, help="Number of parallel Claude requests"
+)
+@click.option(
+    "--delay",
+    default=1.0,
+    show_default=True,
+    help="Seconds to stagger consecutive requests (0 to disable)",
+)
+@click.option(
     "--force",
     is_flag=True,
     default=False,
-    help="Also re-analyze repos that were scored before tags were introduced",
+    help="Also re-analyze repos whose analysis has no tags",
 )
 @click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def analyze(limit: int, force: bool, db_path: Path):
+def analyze(limit: int, concurrency: int, delay: float, force: bool, db_path: Path):
     """Analyze starred repositories with Claude and assign an interest score (1-5) and tags."""
     if not db_path.exists():
         console.print(
             f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
         )
         raise SystemExit(1)
+
+    ok = failed = 0
 
     with open_db(db_path) as conn:
         rows = get_repos_to_analyze(conn, limit, force=force)
@@ -213,25 +223,36 @@ def analyze(limit: int, force: bool, db_path: Path):
 
         has_readme = sum(1 for r in rows if r["readme_path"])
         console.print(
-            f"[dim]Analyzing {len(rows)} repositories ({has_readme} with README)...[/dim]\n"
+            f"[dim]Analyzing {len(rows)} repositories ({has_readme} with README, "
+            f"concurrency={concurrency})...[/dim]\n"
         )
 
-        for i, row in enumerate(rows):
-            name = row["name_with_owner"]
-            readme_indicator = " [dim]+README[/dim]" if row["readme_path"] else ""
-            console.print(f"  Analyzing [cyan]{name}[/cyan]{readme_indicator}...", end=" ")
-            try:
-                repo_id, score, summary, tags = analyze_repo(row)
-                upsert_analysis(conn, repo_id, score, summary, tags)
-                color = SCORE_COLORS.get(score, "white")
-                console.print(f"[{color}]{score}/5[/{color}]  {summary}  [dim]{tags}[/dim]")
-            except Exception as e:
-                console.print(f"[red]error:[/red] {e}")
+        async def run():
+            nonlocal ok, failed
+            with tqdm(total=len(rows), unit="repo", dynamic_ncols=True) as bar:
+                async for row, result, error in analyze_all_async(rows, concurrency, delay):
+                    name = row["name_with_owner"]
+                    if error is not None:
+                        bar.write(f"  ✗ {name} — {error}")
+                        failed += 1
+                    else:
+                        assert result is not None
+                        upsert_analysis(
+                            conn, result.repo_id, result.score, result.summary, result.tags
+                        )
+                        bar.write(
+                            f"  ✓ {name}  {result.score}/5  {result.summary}  "
+                            f"[{', '.join(result.tags)}]"
+                        )
+                        ok += 1
+                    bar.set_postfix(analyzed=ok, failed=failed)
+                    bar.update(1)
 
-            if i < len(rows) - 1:
-                time.sleep(5)
+        asyncio.run(run())
 
-    console.print("\n[bold]Done.[/bold]")
+    console.print(f"\n[bold]Done.[/bold] {ok} analyzed, {failed} failed.")
+    if failed:
+        raise SystemExit(1)
 
 
 def _build_note(row: sqlite3.Row, tag: str) -> str:

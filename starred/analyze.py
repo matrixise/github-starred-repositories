@@ -2,8 +2,9 @@ import asyncio
 import json
 import re
 import sqlite3
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -14,6 +15,14 @@ SYSTEM_PROMPT = (
 )
 
 README_MAX_CHARS = 3000
+
+
+class AnalysisResult(NamedTuple):
+    repo_id: int
+    score: int
+    summary: str
+    tags: list[str]
+
 
 PROMPT_TEMPLATE = """\
 Rate the interest of this GitHub repository for an active software developer.
@@ -76,7 +85,17 @@ def _normalize_tag(tag: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", tag.strip().lower()).strip("-")
 
 
-async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str, list[str]]:
+def _is_rate_limit(exc: BaseException) -> bool:
+    return "rate_limit" in str(exc).lower()
+
+
+@retry(
+    retry=retry_if_exception(_is_rate_limit),
+    wait=wait_exponential(multiplier=2, min=30, max=120),
+    stop=stop_after_attempt(4),
+    reraise=True,
+)
+async def _analyze_one(row: sqlite3.Row) -> AnalysisResult:
     prompt = _build_prompt(row)
     raw = ""
 
@@ -97,18 +116,30 @@ async def _analyze_one(row: sqlite3.Row) -> tuple[int, int, str, list[str]]:
     score = max(1, min(5, int(data["score"])))
     summary = str(data["summary"])
     tags = [tag for t in data["tags"] if (tag := _normalize_tag(str(t)))]
-    return row["id"], score, summary, tags
+    return AnalysisResult(row["id"], score, summary, tags)
 
 
-def _is_rate_limit(exc: BaseException) -> bool:
-    return "rate_limit" in str(exc).lower()
+async def analyze_all_async(
+    rows: list[sqlite3.Row],
+    concurrency: int = 3,
+    delay: float = 0.0,
+) -> AsyncIterator[tuple[sqlite3.Row, AnalysisResult | None, Exception | None]]:
+    """
+    Analyze rows concurrently, yielding (row, result, error) as each completes.
 
+    `delay` staggers the start of each request to spread the load on the API.
+    """
+    semaphore = asyncio.Semaphore(concurrency)
 
-@retry(
-    retry=retry_if_exception(_is_rate_limit),
-    wait=wait_exponential(multiplier=2, min=30, max=120),
-    stop=stop_after_attempt(4),
-    reraise=True,
-)
-def analyze_repo(row: sqlite3.Row) -> tuple[int, int, str, list[str]]:
-    return asyncio.run(_analyze_one(row))
+    async def run_one(index: int, row: sqlite3.Row):
+        async with semaphore:
+            if delay:
+                await asyncio.sleep(delay * index)
+            try:
+                return row, await _analyze_one(row), None
+            except Exception as e:  # noqa: BLE001 - reported per repo, never fatal
+                return row, None, e
+
+    tasks = [asyncio.create_task(run_one(i, row)) for i, row in enumerate(rows)]
+    for coro in asyncio.as_completed(tasks):
+        yield await coro
