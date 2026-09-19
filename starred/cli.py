@@ -17,7 +17,7 @@ from .db import (
     get_last_starred_at,
     get_repos_for_export,
     get_repos_for_readme,
-    get_repos_without_analysis_with_readme,
+    get_repos_to_analyze,
     open_db,
     set_meta,
     set_readme_path,
@@ -205,7 +205,7 @@ def analyze(limit: int, force: bool, db_path: Path):
         raise SystemExit(1)
 
     with open_db(db_path) as conn:
-        rows = get_repos_without_analysis_with_readme(conn, limit, force=force)
+        rows = get_repos_to_analyze(conn, limit, force=force)
 
         if not rows:
             console.print("[green]All repositories have already been analyzed.[/green]")

@@ -272,9 +272,10 @@ def get_repos_for_export(conn: sqlite3.Connection, min_score: int) -> list[sqlit
     ).fetchall()
 
 
-def get_repos_without_analysis_with_readme(
+def get_repos_to_analyze(
     conn: sqlite3.Connection, limit: int, force: bool = False
 ) -> list[sqlite3.Row]:
+    """Repos still lacking an analysis, those with a README first."""
     where = (
         "a.repo_id IS NULL OR NOT EXISTS (SELECT 1 FROM analysis_tags WHERE repo_id = r.id)"
         if force
@@ -290,7 +291,7 @@ def get_repos_without_analysis_with_readme(
         LEFT JOIN analysis a ON a.repo_id = r.id
         WHERE {where}
         GROUP BY r.id
-        ORDER BY r.starred_at DESC
+        ORDER BY (r.readme_path IS NULL), r.starred_at DESC
         LIMIT ?
         """,
         (limit,),
