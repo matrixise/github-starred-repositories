@@ -35,9 +35,12 @@ tasks:
       - uv run starred fetch-readme {{if .LIMIT}}--limit {{.LIMIT}}{{end}} --concurrency {{.CONCURRENCY}}
 
   analyze:
-    desc: "Analyze repositories with Claude (usage: task analyze [LIMIT=20])"
+    desc: "Analyze repositories with Claude (usage: task analyze [LIMIT=20] [ANALYZE_CONCURRENCY=3])"
+    vars:
+      LIMIT: '{{.LIMIT | default "20"}}'
+      ANALYZE_CONCURRENCY: '{{.ANALYZE_CONCURRENCY | default "3"}}'
     cmds:
-      - uv run starred analyze {{if .LIMIT}}--limit {{.LIMIT}}{{end}}
+      - uv run starred analyze --limit {{.LIMIT}} --concurrency {{.ANALYZE_CONCURRENCY}}
 
   export:
     desc: Export high-scoring repositories to Obsidian vault (reads OBSIDIAN_* from .env)
