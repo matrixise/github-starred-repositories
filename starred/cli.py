@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 import click
+import frontmatter
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
@@ -257,38 +258,47 @@ def analyze(limit: int, concurrency: int, delay: float, force: bool, db_path: Pa
         raise SystemExit(1)
 
 
-def _build_note(row: sqlite3.Row, tag: str) -> str:
-    owner, repo = row["name_with_owner"].split("/", 1)
-    topics_raw = row["topics"] or ""
-    topics_list = [t.strip() for t in topics_raw.split(",") if t.strip()]
-    topics_yaml = "[" + ", ".join(topics_list) + "]" if topics_list else "[]"
+def _note_metadata(row: sqlite3.Row, tag: str) -> dict:
     lang = row["primary_language"] or "unknown"
     lang_tag = lang.lower().replace(" ", "-").replace("+", "plus").replace("#", "sharp")
-    tags_yaml = f'["{tag}", "{lang_tag}"]'
-    pushed = row["pushed_at"][:10] if row["pushed_at"] else "unknown"
+    return {
+        "title": row["name_with_owner"],
+        "url": row["url"],
+        "language": lang,
+        "topics": _split_csv(row["topics"]),
+        "score": row["score"],
+        "summary": row["summary"],
+        "starred_at": row["starred_at"][:10],
+        "created_at": row["created_at"][:10] if row["created_at"] else None,
+        "pushed_at": row["pushed_at"][:10] if row["pushed_at"] else None,
+        "stars": row["stargazer_count"],
+        "archived": bool(row["is_archived"]),
+        "tags": [tag, lang_tag, *_split_csv(row["tags"])],
+    }
+
+
+def _split_csv(value: str | None) -> list[str]:
+    return [item.strip() for item in (value or "").split(",") if item.strip()]
+
+
+def _build_note(row: sqlite3.Row, tag: str) -> str:
+    owner, repo = row["name_with_owner"].split("/", 1)
+    meta = _note_metadata(row, tag)
+    topics = meta["topics"]
     score_badge = "⭐" * row["score"]
     archived_line = "\n> ⚠️ Archived" if row["is_archived"] else ""
-    return f"""---
-title: "{row["name_with_owner"]}"
-url: {row["url"]}
-language: {lang}
-topics: {topics_yaml}
-score: {row["score"]}
-summary: "{row["summary"]}"
-starred_at: {row["starred_at"][:10]}
-tags: {tags_yaml}
----
-
-# {owner}/{repo}
+    pushed = meta["pushed_at"] or "unknown"
+    body = f"""# {owner}/{repo}
 
 > {row["summary"]}{archived_line}
 
-{score_badge} **Score {row["score"]}/5** | **Language:** {lang} | **Stars:** {row["stargazer_count"]:,} | **Last push:** {pushed}
+{score_badge} **Score {row["score"]}/5** | **Language:** {meta["language"]} | **Stars:** {row["stargazer_count"]:,} | **Last push:** {pushed}
 
-**Topics:** {", ".join(f"`{t}`" for t in topics_list) if topics_list else "_(none)_"}
+**Topics:** {", ".join(f"`{t}`" for t in topics) if topics else "_(none)_"}
 
 [View on GitHub]({row["url"]})
 """
+    return frontmatter.dumps(frontmatter.Post(body, **meta)) + "\n"
 
 
 @main.command("export-obsidian")
