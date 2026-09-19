@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS repositories (
     starred_at        TEXT    NOT NULL,
     primary_language  TEXT,
     stargazer_count   INTEGER NOT NULL DEFAULT 0,
+    readme_path       TEXT,
     synced_at         TEXT    NOT NULL
 );
 
@@ -42,6 +43,15 @@ CREATE TABLE IF NOT EXISTS analysis (
 """
 
 
+INDEXES = """
+CREATE INDEX IF NOT EXISTS idx_repositories_language ON repositories(primary_language);
+CREATE INDEX IF NOT EXISTS idx_repositories_starred  ON repositories(starred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_repositories_readme   ON repositories(readme_path);
+CREATE INDEX IF NOT EXISTS idx_analysis_score        ON analysis(score);
+CREATE INDEX IF NOT EXISTS idx_topics_name           ON topics(topic_name);
+"""
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """Apply incremental schema migrations."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(repositories)")}
@@ -62,6 +72,7 @@ def open_db(path: Path = DEFAULT_DB):
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
     _migrate(conn)
+    conn.executescript(INDEXES)
     try:
         yield conn
         conn.commit()
