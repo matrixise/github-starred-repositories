@@ -6,7 +6,7 @@ import pytest
 from starred.db import (
     get_last_starred_at,
     get_repos_for_readme,
-    get_repos_without_analysis_with_readme,
+    get_repos_to_analyze,
     get_tags,
     open_db,
     update_repo_metadata,
@@ -256,32 +256,32 @@ class TestUpsertAnalysis:
         assert get_tags(db, repo_id) == []
 
 
-class TestGetReposWithoutAnalysisWithReadme:
+class TestGetReposToAnalyze:
     def test_excludes_analyzed_repos_by_default(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
         upsert_analysis(db, repo_id, score=4, summary="Great tool", tags=["cli-tool"])
 
-        result = get_repos_without_analysis_with_readme(db, limit=20)
+        result = get_repos_to_analyze(db, limit=20)
         assert result == []
 
     def test_includes_unanalyzed_repos(self, db, sample_repo):
         upsert_repo(db, sample_repo)
 
-        result = get_repos_without_analysis_with_readme(db, limit=20)
+        result = get_repos_to_analyze(db, limit=20)
         assert len(result) == 1
 
     def test_force_includes_analyzed_repos_without_tags(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
         upsert_analysis(db, repo_id, score=4, summary="Great tool")
 
-        result = get_repos_without_analysis_with_readme(db, limit=20, force=True)
+        result = get_repos_to_analyze(db, limit=20, force=True)
         assert len(result) == 1
 
     def test_force_excludes_repos_already_tagged(self, db, sample_repo):
         repo_id = upsert_repo(db, sample_repo)
         upsert_analysis(db, repo_id, score=4, summary="Great tool", tags=["cli-tool"])
 
-        result = get_repos_without_analysis_with_readme(db, limit=20, force=True)
+        result = get_repos_to_analyze(db, limit=20, force=True)
         assert result == []
 
 
