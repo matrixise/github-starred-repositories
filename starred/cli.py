@@ -1,6 +1,8 @@
 import asyncio
 import re as _re
 import sqlite3
+from collections import Counter
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import click
@@ -17,6 +19,7 @@ from .db import (
     get_last_starred_at,
     get_repos_for_export,
     get_repos_for_readme,
+    get_repos_starred_since,
     get_repos_to_analyze,
     open_db,
     set_meta,
@@ -256,6 +259,120 @@ def analyze(limit: int, concurrency: int, delay: float, force: bool, db_path: Pa
     console.print(f"\n[bold]Done.[/bold] {ok} analyzed, {failed} failed.")
     if failed:
         raise SystemExit(1)
+
+
+SINCE_UNITS = {"m": "minutes", "h": "hours", "d": "days", "w": "weeks"}
+OTHER_THEME = "autres"
+
+
+def _parse_since(value: str) -> datetime:
+    """Turn `24h`, `7d`, `90m`, `2w` or an ISO date into an absolute UTC bound."""
+    match = _re.fullmatch(r"(\d+)\s*([mhdw])", value.strip().lower())
+    if match:
+        amount, unit = match.groups()
+        return datetime.now(UTC) - timedelta(**{SINCE_UNITS[unit]: int(amount)})
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise click.BadParameter(
+            f"{value!r} is not a duration like 24h/7d/2w nor an ISO date"
+        ) from None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _group_by_theme(rows: list[sqlite3.Row]) -> dict[str, list[sqlite3.Row]]:
+    """
+    Group repos under the tag they share with the most siblings.
+
+    A tag needs at least two repos to form a theme; everything else lands
+    in "Autres".
+    """
+    counts = Counter(tag for row in rows for tag in _split_csv(row["tags"]))
+    groups: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        shared = [t for t in _split_csv(row["tags"]) if counts[t] > 1]
+        theme = max(shared, key=lambda t: (counts[t], t)) if shared else OTHER_THEME
+        groups.setdefault(theme, []).append(row)
+    for group in groups.values():
+        group.sort(key=lambda r: (-(r["score"] or 0), -r["stargazer_count"]))
+    # "Autres" is a fallback, not a theme: it always comes last.
+    return dict(sorted(groups.items(), key=lambda kv: (kv[0] == OTHER_THEME, -len(kv[1]), kv[0])))
+
+
+def _repo_age(row: sqlite3.Row, now: datetime) -> str:
+    if not row["created_at"]:
+        return "âge inconnu"
+    created = datetime.fromisoformat(row["created_at"])
+    days = (now - created).days
+    if days <= 1:
+        return "créé aujourd'hui"
+    if days < 60:
+        return f"créé il y a {days} jours"
+    if days < 730:
+        return f"créé il y a {days // 30} mois"
+    return f"créé il y a {days // 365} ans"
+
+
+def _build_digest(rows: list[sqlite3.Row], since: datetime) -> str:
+    now = datetime.now(UTC)
+    scores = Counter(row["score"] for row in rows if row["score"])
+    lines = [
+        f"# {len(rows)} nouveaux dépôts depuis le {since.strftime('%d/%m/%Y %H:%M')} UTC",
+        "",
+        "Scores : "
+        + (", ".join(f"{n} × {s}/5" for s, n in sorted(scores.items(), reverse=True)))
+        + (
+            f" ({len(rows) - sum(scores.values())} sans analyse)"
+            if sum(scores.values()) < len(rows)
+            else ""
+        ),
+        "",
+    ]
+    for theme, group in _group_by_theme(rows).items():
+        lines.append(f"## {theme} ({len(group)})")
+        lines.append("")
+        for row in group:
+            score = f"{row['score']}/5" if row["score"] else "non analysé"
+            facts = ", ".join(
+                [
+                    score,
+                    row["primary_language"] or "langage inconnu",
+                    f"{row['stargazer_count']:,} ★".replace(",", " "),
+                    _repo_age(row, now),
+                ]
+            )
+            lines.append(f"- **{row['name_with_owner']}** ({facts})")
+            lines.append(f"  {row['summary'] or row['description'] or '_(pas de description)_'}")
+            if row["tags"]:
+                lines.append(f"  Tags : {row['tags']}")
+            lines.append(f"  {row['url']}")
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+@main.command()
+@click.option(
+    "--since", default="24h", show_default=True, help="Duration (24h, 7d, 2w) or ISO date"
+)
+@click.option("--min-score", default=None, type=int, help="Only include repos scored at least this")
+@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
+def digest(since: str, min_score: int | None, db_path: Path):
+    """Summarize recently starred repositories, ready to paste into an email."""
+    if not db_path.exists():
+        console.print(
+            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
+        )
+        raise SystemExit(1)
+
+    bound = _parse_since(since)
+    with open_db(db_path) as conn:
+        rows = get_repos_starred_since(conn, bound, min_score)
+
+    if not rows:
+        click.echo(f"No repository starred since {bound.isoformat()}.")
+        return
+
+    click.echo(_build_digest(rows, bound))
 
 
 def _note_metadata(row: sqlite3.Row, tag: str) -> dict:

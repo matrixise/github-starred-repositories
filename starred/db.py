@@ -272,6 +272,37 @@ def get_repos_for_export(conn: sqlite3.Connection, min_score: int) -> list[sqlit
     ).fetchall()
 
 
+def get_repos_starred_since(
+    conn: sqlite3.Connection, since: datetime, min_score: int | None = None
+) -> list[sqlite3.Row]:
+    """
+    Repos starred at or after `since`, newest first.
+
+    starred_at is always stored as an ISO string in UTC, so a lexicographic
+    comparison against an equally formatted bound is safe here.
+    """
+    sql = """
+        SELECT r.name_with_owner, r.description, r.url, r.primary_language,
+               r.starred_at, r.created_at, r.pushed_at, r.stargazer_count, r.is_archived,
+               a.score, a.summary,
+               (SELECT GROUP_CONCAT(topic_name, ', ')
+                  FROM (SELECT topic_name FROM topics WHERE repo_id = r.id ORDER BY topic_name)
+               ) AS topics,
+               (SELECT GROUP_CONCAT(tag, ', ')
+                  FROM (SELECT tag FROM analysis_tags WHERE repo_id = r.id ORDER BY tag)
+               ) AS tags
+        FROM repositories r
+        LEFT JOIN analysis a ON a.repo_id = r.id
+        WHERE r.starred_at >= ?
+    """
+    params: list = [since.astimezone(UTC).isoformat()]
+    if min_score is not None:
+        sql += " AND a.score >= ?"
+        params.append(min_score)
+    sql += " ORDER BY r.starred_at DESC"
+    return conn.execute(sql, params).fetchall()
+
+
 def get_repos_to_analyze(
     conn: sqlite3.Connection, limit: int, force: bool = False
 ) -> list[sqlite3.Row]:
