@@ -42,6 +42,13 @@ tasks:
     cmds:
       - uv run starred analyze --limit {{.LIMIT}} --concurrency {{.ANALYZE_CONCURRENCY}}
 
+  digest:
+    desc: "Summarize recently starred repos (usage: task digest [SINCE=24h])"
+    vars:
+      SINCE: '{{.SINCE | default "24h"}}'
+    cmds:
+      - uv run starred digest --since {{.SINCE}}
+
   export:
     desc: Export high-scoring repositories to Obsidian vault (reads OBSIDIAN_* from .env)
     cmds:
