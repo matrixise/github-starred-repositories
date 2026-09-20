@@ -8,14 +8,14 @@ CLI tool (`starred`) that manages a curated list of GitHub starred repositories:
 2. Refreshes stars, archived flag, created_at and pushed_at in batch (`refresh-stars`, lightweight GraphQL sync)
 3. Downloads READMEs via the **GitHub REST API** (async, concurrent with httpx)
 4. Analyzes each repo with **Claude** (claude-agent-sdk) to produce a 1-5 interest score
-5. Lists repos with filters (language, topic, score, archived)
+5. Lists repos with filters (language, topic, score, archived) and digests recent stars (`digest --since 24h`)
 6. Exports top-scored repos to an **Obsidian vault** as Markdown notes
 
 ## Architecture
 
 ```
 starred/
-  cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, list, export-obsidian
+  cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, digest, list, export-obsidian
   auth.py      # GitHub token resolution: get_token() (GITHUB_TOKEN, then `gh auth token`)
   client.py    # GitHub GraphQL client: fetch_starred() generator + fetch_repo_metadata() (httpx sync)
   readme.py    # GitHub REST client: fetch_all_async() (httpx async, semaphore)
@@ -64,6 +64,7 @@ task sync:full            # full reload
 task refresh-stars        # refresh stars, archived flag and dates
 task fetch-readme LIMIT=50 CONCURRENCY=10
 task analyze LIMIT=20 ANALYZE_CONCURRENCY=3   # defaults: LIMIT=20, ANALYZE_CONCURRENCY=3
+task digest SINCE=24h     # email-ready summary of recent stars
 task export               # export to Obsidian
 task export:prune         # export + remove orphan notes
 task update               # full pipeline: sync, fetch-readme, analyze
@@ -76,6 +77,7 @@ uv run starred refresh-stars --batch-size 100
 uv run starred fetch-readme --limit 10 --concurrency 5
 uv run starred analyze --limit 5 --concurrency 3
 uv run starred list --min-score 4 --description
+uv run starred digest --since 7d --min-score 4
 uv run starred export-obsidian --vault ~/Documents/MyVault --min-score 4 --prune --dry-run
 
 # Quality gates (same as CI)
