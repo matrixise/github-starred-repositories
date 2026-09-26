@@ -272,6 +272,71 @@ def get_repos_for_export(conn: sqlite3.Connection, min_score: int) -> list[sqlit
     ).fetchall()
 
 
+SEARCH_BLOB = """LOWER(
+            r.name_with_owner || ' ' ||
+            COALESCE(r.description, '') || ' ' ||
+            COALESCE(a.summary, '') || ' ' ||
+            COALESCE(tg.tags, '') || ' ' ||
+            COALESCE(tp.topics, '')
+        )"""
+
+
+def search_repos(
+    conn: sqlite3.Connection,
+    keywords: Sequence[str],
+    min_score: int | None = None,
+    include_archived: bool = True,
+    limit: int = 25,
+) -> list[sqlite3.Row]:
+    """
+    Repos whose name, description, summary, tags or topics contain any keyword.
+
+    Ranked by how many distinct keywords a repo matches, then score, then stars:
+    a repo hitting two keywords outranks a popular one hitting a single generic
+    term. `matched` carries that count so callers can show it.
+    """
+    if not keywords:
+        raise ValueError("at least one keyword is required")
+
+    matched = " + ".join([f"(CASE WHEN {SEARCH_BLOB} LIKE ? THEN 1 ELSE 0 END)"] * len(keywords))
+    params: list = [f"%{k.strip().lower()}%" for k in keywords]
+
+    conditions = ["matched > 0"]
+    if min_score is not None:
+        conditions.append("score >= ?")
+        params.append(min_score)
+    if not include_archived:
+        conditions.append("is_archived = 0")
+    params.append(limit)
+
+    sql = f"""
+        WITH tg AS (
+            SELECT repo_id, GROUP_CONCAT(tag, ', ') AS tags
+            FROM (SELECT repo_id, tag FROM analysis_tags ORDER BY tag)
+            GROUP BY repo_id
+        ),
+        tp AS (
+            SELECT repo_id, GROUP_CONCAT(topic_name, ', ') AS topics
+            FROM (SELECT repo_id, topic_name FROM topics ORDER BY topic_name)
+            GROUP BY repo_id
+        )
+        SELECT * FROM (
+            SELECT r.name_with_owner, r.description, r.url, r.primary_language,
+                   r.stargazer_count, r.is_archived, r.created_at, r.pushed_at,
+                   a.score, a.summary, tg.tags, tp.topics,
+                   ({matched}) AS matched
+            FROM repositories r
+            LEFT JOIN analysis a ON a.repo_id = r.id
+            LEFT JOIN tg ON tg.repo_id = r.id
+            LEFT JOIN tp ON tp.repo_id = r.id
+        )
+        WHERE {" AND ".join(conditions)}
+        ORDER BY matched DESC, score DESC, stargazer_count DESC
+        LIMIT ?
+    """
+    return conn.execute(sql, params).fetchall()
+
+
 def get_repos_starred_since(
     conn: sqlite3.Connection, since: datetime, min_score: int | None = None
 ) -> list[sqlite3.Row]:
