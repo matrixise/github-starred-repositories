@@ -113,6 +113,22 @@ sqlite3 starred.db ".schema"
 - Lint and format with ruff (line length 100, rules `E,F,I,UP,B,SIM`), type-check with `ty`. Run `prek run --all-files` before pushing; CI runs the same hooks plus pytest.
 - Tests use pytest (`pytest-asyncio` is available for async cases); shared fixtures (`tmp_db`, `sample_repo`, `sample_row_dict`) live in `tests/conftest.py`. Add a test for every new DB query or HTTP client behavior.
 
+## Skills
+
+Operational workflows live in `.claude/skills/`, one skill per intent, on the model of
+a shared skill read first:
+
+| Skill | Use it for |
+|-------|------------|
+| `starred-shared` | Read first: command inventory, SQL schema, known pitfalls, output conventions |
+| `starred-update` | Reloading the catalogue (`task update` plus the analyze catch-up loop), `refresh-stars`, Obsidian export |
+| `starred-digest` | Summarizing a recent window (`starred digest --since`) |
+| `starred-search` | Answering "do I already have a project that does X" from the local catalogue |
+
+They carry the operational knowledge the code cannot express: the implicit
+`--limit 20` on `analyze`, why `starred_at` must never be compared to
+`datetime('now')` in SQL, and the four repositories the GitHub API no longer resolves.
+
 ## Do Not Commit
 
 The following must not be committed (already in `.gitignore`):
