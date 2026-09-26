@@ -15,7 +15,7 @@ CLI tool (`starred`) that manages a curated list of GitHub starred repositories:
 
 ```
 starred/
-  cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, digest, list, export-obsidian
+  cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, digest, search, list, export-obsidian
   auth.py      # GitHub token resolution: get_token() (GITHUB_TOKEN, then `gh auth token`)
   client.py    # GitHub GraphQL client: fetch_starred() generator + fetch_repo_metadata() (httpx sync)
   readme.py    # GitHub REST client: fetch_all_async() (httpx async, semaphore)
@@ -65,6 +65,7 @@ task refresh-stars        # refresh stars, archived flag and dates
 task fetch-readme LIMIT=50 CONCURRENCY=10
 task analyze LIMIT=20 ANALYZE_CONCURRENCY=3   # defaults: LIMIT=20, ANALYZE_CONCURRENCY=3
 task digest SINCE=24h     # email-ready summary of recent stars
+task search -- ngrok tunnel  # keyword search, ranked by keywords matched
 task export               # export to Obsidian
 task export:prune         # export + remove orphan notes
 task update               # full pipeline: sync, fetch-readme, analyze
@@ -78,6 +79,7 @@ uv run starred fetch-readme --limit 10 --concurrency 5
 uv run starred analyze --limit 5 --concurrency 3
 uv run starred list --min-score 4 --description
 uv run starred digest --since 7d --min-score 4
+uv run starred search ngrok tunnel --no-archived
 uv run starred export-obsidian --vault ~/Documents/MyVault --min-score 4 --prune --dry-run
 
 # Quality gates (same as CI)
@@ -123,7 +125,7 @@ a shared skill read first:
 | `starred-shared` | Read first: command inventory, SQL schema, known pitfalls, output conventions |
 | `starred-update` | Reloading the catalogue (`task update` plus the analyze catch-up loop), `refresh-stars`, Obsidian export |
 | `starred-digest` | Summarizing a recent window (`starred digest --since`) |
-| `starred-search` | Answering "do I already have a project that does X" from the local catalogue |
+| `starred-search` | Answering "do I already have a project that does X", via `starred search` |
 
 They carry the operational knowledge the code cannot express: the implicit
 `--limit 20` on `analyze`, why `starred_at` must never be compared to
