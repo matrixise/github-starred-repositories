@@ -28,6 +28,7 @@ gitignored: never commit them, never paste `GITHUB_TOKEN` into output.
 | `task fetch-readme` | `starred fetch-readme` | Async README download for rows where `readme_path IS NULL` |
 | `task analyze` | `starred analyze` | Claude scoring + summary + tags, concurrent (default 3) |
 | `task digest` | `starred digest --since 24h` | Markdown summary of a recent window |
+| `task search -- <kw>` | `starred search <kw>...` | Keyword search across names, descriptions, summaries, tags and topics, ranked by keywords matched |
 | `task export` | `starred export-obsidian` | Writes Obsidian notes for high scores |
 | `task export:prune` | `starred export-obsidian --prune` | Same, plus deletes notes that no longer match |
 | `task update` | — | Pipeline: `sync` → `fetch-readme` → `analyze` |
@@ -56,8 +57,8 @@ with open_db() as c:
 ```
 
 Useful helpers already exist in `starred/db.py` — reuse them instead of rewriting SQL:
-`get_repos_starred_since()`, `get_repos_for_export()`, `get_repos_to_analyze()`,
-`get_tags()`, `get_last_starred_at()`.
+`search_repos()`, `get_repos_starred_since()`, `get_repos_for_export()`,
+`get_repos_to_analyze()`, `get_tags()`, `get_last_starred_at()`.
 
 ## Pitfalls
 
