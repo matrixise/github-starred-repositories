@@ -22,6 +22,7 @@ from .db import (
     get_repos_starred_since,
     get_repos_to_analyze,
     open_db,
+    search_repos,
     set_meta,
     set_readme_path,
     update_repo_metadata,
@@ -373,6 +374,66 @@ def digest(since: str, min_score: int | None, db_path: Path):
         return
 
     click.echo(_build_digest(rows, bound))
+
+
+@main.command()
+@click.argument("keywords", nargs=-1, required=True)
+@click.option("--limit", default=25, show_default=True, help="Max repos to display")
+@click.option("--min-score", default=None, type=int, help="Only include repos scored at least this")
+@click.option(
+    "--no-archived", is_flag=True, default=False, help="Exclude repositories archived upstream"
+)
+@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
+def search(
+    keywords: tuple[str, ...], limit: int, min_score: int | None, no_archived: bool, db_path: Path
+):
+    """Search the catalogue by keyword across names, descriptions, summaries, tags and topics."""
+    if not db_path.exists():
+        console.print(
+            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
+        )
+        raise SystemExit(1)
+
+    with open_db(db_path) as conn:
+        rows = search_repos(
+            conn,
+            keywords,
+            min_score=min_score,
+            include_archived=not no_archived,
+            limit=limit,
+        )
+
+    terms = ", ".join(keywords)
+    if not rows:
+        click.echo(f"No repository matching: {terms}")
+        return
+
+    now = datetime.now(UTC)
+    lines = [
+        f"# {len(rows)} dépôts correspondant à : {terms}",
+        "",
+        "Triés par nombre de mots-clés touchés, puis score, puis étoiles.",
+        "",
+    ]
+    for row in rows:
+        score = f"{row['score']}/5" if row["score"] else "non analysé"
+        facts = ", ".join(
+            [
+                score,
+                row["primary_language"] or "langage inconnu",
+                f"{row['stargazer_count']:,} ★".replace(",", " "),
+                _repo_age(row, now),
+                f"poussé {row['pushed_at'][:10]}" if row["pushed_at"] else "jamais poussé",
+            ]
+        )
+        archived = "  **ARCHIVÉ**" if row["is_archived"] else ""
+        lines.append(f"- [{row['matched']}] **{row['name_with_owner']}** ({facts}){archived}")
+        lines.append(f"  {row['summary'] or row['description'] or '_(pas de description)_'}")
+        if row["tags"]:
+            lines.append(f"  Tags : {row['tags']}")
+        lines.append(f"  {row['url']}")
+        lines.append("")
+    click.echo("\n".join(lines).rstrip())
 
 
 def _note_metadata(row: sqlite3.Row, tag: str) -> dict:
