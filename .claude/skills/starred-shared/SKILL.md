@@ -26,12 +26,15 @@ gitignored: never commit them, never paste `GITHUB_TOKEN` into output.
 | `task sync:full` | `starred sync --full` | Walks every starred page; the only way to backfill columns on old rows |
 | `task refresh-stars` | `starred refresh-stars` | Batched GraphQL refresh of `stargazer_count`, `is_archived`, `created_at`, `pushed_at` for the whole catalogue |
 | `task fetch-readme` | `starred fetch-readme` | Async README download for rows where `readme_path IS NULL` |
-| `task analyze` | `starred analyze` | Claude scoring + summary + tags, concurrent (default 3) |
+| `task analyze` | `starred analyze` | Claude scoring + summary + tags, concurrent (default 3), capped at 20 |
+| `task analyze:all` | `starred analyze --all` | Same, with no cap: every pending repo |
+| `task status` | `starred status` | Completeness counters; `--strict` exits 1 when analyses are missing |
 | `task digest` | `starred digest --since 24h` | Markdown summary of a recent window |
 | `task search -- <kw>` | `starred search <kw>...` | Keyword search across names, descriptions, summaries, tags and topics, ranked by keywords matched |
 | `task export` | `starred export-obsidian` | Writes Obsidian notes for high scores |
 | `task export:prune` | `starred export-obsidian --prune` | Same, plus deletes notes that no longer match |
-| `task update` | — | Pipeline: `sync` → `fetch-readme` → `analyze` |
+| `task all` | — | **The whole job**: `sync` → `fetch-readme` → `analyze --all` → `status --strict` → `digest` |
+| `task update` | — | Older pipeline: `sync` → `fetch-readme` → `analyze` (capped at 20, see pitfalls) |
 | `task secrets` | — | gitleaks scan over git history |
 
 ## SQL schema
@@ -57,16 +60,18 @@ with open_db() as c:
 ```
 
 Useful helpers already exist in `starred/db.py` — reuse them instead of rewriting SQL:
-`search_repos()`, `get_repos_starred_since()`, `get_repos_for_export()`,
-`get_repos_to_analyze()`, `get_tags()`, `get_last_starred_at()`.
+`get_status()`, `search_repos()`, `get_repos_starred_since()`,
+`get_repos_for_export()`, `get_repos_to_analyze()` (pass `limit=None` for all),
+`get_tags()`, `get_last_starred_at()`.
 
 ## Pitfalls
 
 These cost real time when rediscovered. Read them before improvising.
 
-**`analyze` stops after 20 repos.** The CLI default is `--limit 20` and `task update`
-inherits it, so a sync of 24 new repos leaves 4 unanalyzed and still exits 0. Always
-count what remains and loop. See `starred-update`.
+**`task update` stops after 20 repos.** The `analyze` default is `--limit 20` and
+`task update` inherits it, so a sync of 82 new repos leaves 62 unanalyzed **and still
+exits 0**. Prefer `task all`, which runs `analyze --all` and then fails on
+`status --strict`. Keep `--limit` only to deliberately cap a run.
 
 **Never compare `starred_at` against `datetime('now', ...)` in SQL.** Timestamps are
 stored as ISO strings with a `T` separator; SQLite's `datetime()` uses a space. The

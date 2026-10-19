@@ -21,49 +21,38 @@ metadata:
 
 ## Steps
 
-1. **Run the pipeline in the background.**
+1. **Run the whole job in the background.**
 
    ```bash
-   task update
+   task all              # or: task all SINCE=3d
    ```
 
-   `sync` → `fetch-readme` → `analyze`. Output is long and tqdm-buffered, so run it
-   detached and read the output file when it completes rather than polling.
+   `sync` → `fetch-readme` → `analyze --all` → `status --strict` → `digest`. Output is
+   long and tqdm-buffered, so run it detached and read the output file when it
+   completes rather than polling.
 
-2. **Catch up on the analyze cap.** This is the step that gets forgotten. `analyze`
-   stopped at 20 repos even though the sync may have brought more:
+   The job is self-checking: `analyze --all` has no cap, and `status --strict` exits
+   non-zero if any repo still lacks an analysis or tags. A repo with no README on
+   GitHub is reported but never fails the run.
 
-   ```bash
-   uv run python -c "
-   from starred.db import open_db
-   with open_db() as c:
-       print(c.execute('''SELECT COUNT(*) FROM repositories r
-                          LEFT JOIN analysis a ON a.repo_id = r.id
-                          WHERE a.repo_id IS NULL''').fetchone()[0])
-   "
-   ```
+2. **Read the verification, not just the last line.** `status --strict` prints the
+   counters and the pending work. If the job failed there, `task analyze:all` catches
+   up; a second failure is a real problem worth investigating, not a retry.
 
-   If the count is not zero, run `task analyze LIMIT=<count>` and repeat until it is.
+3. **Add the cross-cutting read.** The job already printed the digest, so do not run
+   it again. Follow `starred-digest` for what to say on top of it: dominant theme,
+   repos created the same day they were starred, how the batch relates to what the
+   user is working on.
 
-3. **Verify the end state** in one query:
+### When not using `task all`
 
-   ```bash
-   uv run python -c "
-   from starred.db import open_db
-   with open_db() as c:
-       q = lambda s: c.execute(s).fetchone()[0]
-       print('repos:', q('SELECT COUNT(*) FROM repositories'))
-       print('analyses:', q('SELECT COUNT(*) FROM analysis'))
-       print('no analysis:', q('SELECT COUNT(*) FROM repositories r LEFT JOIN analysis a ON a.repo_id=r.id WHERE a.repo_id IS NULL'))
-       print('no readme:', q('SELECT COUNT(*) FROM repositories WHERE readme_path IS NULL'))
-       print('empty tags:', q('SELECT COUNT(*) FROM analysis a WHERE NOT EXISTS (SELECT 1 FROM analysis_tags WHERE repo_id = a.repo_id)'))
-   "
-   ```
+Running the steps individually (to scope a tag, or to cap a costly analyze run) means
+`task analyze` applies its default `--limit 20` and exits 0 regardless. Then check and
+loop yourself:
 
-4. **Report, then show.** State how many repos arrived, how many failed, and whether
-   anything is still pending. Then follow `starred-digest` on the same window: the
-   user asked to reload the repos because they want to know what landed, not to read
-   counters.
+```bash
+uv run starred status --strict || task analyze:all
+```
 
 ## Refreshing metadata
 
@@ -115,7 +104,8 @@ hand-written notes in the same folder survive. Expect every note to be reported 
 - Do not run `task sync:full` for a routine update. It re-walks every page for no
   gain; it is for backfilling a newly added column.
 - Do not report success on the `Done.` line alone: `fetch-readme` and `analyze` exit 1
-  on partial failure.
+  on partial failure, and a capped `analyze` exits 0 with work left.
+- Do not re-run the digest after `task all`: it already printed one.
 - Do not stop at "N repos synced" without telling the user what those repos are.
 - Do not re-analyze already-scored repos to "refresh" them; `--force` exists only for
   analyses missing tags.
