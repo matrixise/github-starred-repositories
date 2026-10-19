@@ -15,7 +15,7 @@ CLI tool (`starred`) that manages a curated list of GitHub starred repositories:
 
 ```
 starred/
-  cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, digest, search, list, export-obsidian
+  cli.py       # Click commands: sync, refresh-stars, fetch-readme, analyze, status, digest, search, list, export-obsidian
   auth.py      # GitHub token resolution: get_token() (GITHUB_TOKEN, then `gh auth token`)
   client.py    # GitHub GraphQL client: fetch_starred() generator + fetch_repo_metadata() (httpx sync)
   readme.py    # GitHub REST client: fetch_all_async() (httpx async, semaphore)
@@ -59,11 +59,15 @@ Copy `.env.example` to `.env`. Variables read by the CLI and the Taskfile:
 ```bash
 # Preferred entry point: go-task (loads .env automatically)
 task                      # list all tasks
+task all                  # the whole job: sync, READMEs, analyze everything, verify, digest
+task all SINCE=3d         # same, with the digest window
 task sync                 # incremental sync
 task sync:full            # full reload
 task refresh-stars        # refresh stars, archived flag and dates
 task fetch-readme LIMIT=50 CONCURRENCY=10
 task analyze LIMIT=20 ANALYZE_CONCURRENCY=3   # defaults: LIMIT=20, ANALYZE_CONCURRENCY=3
+task analyze:all          # no cap, every pending repo
+task status STRICT=1      # completeness check, exits 1 if analyses are missing
 task digest SINCE=24h     # email-ready summary of recent stars
 task search -- ngrok tunnel  # keyword search, ranked by keywords matched
 task export               # export to Obsidian
@@ -76,7 +80,8 @@ uv run starred sync
 uv run starred sync --full
 uv run starred refresh-stars --batch-size 100
 uv run starred fetch-readme --limit 10 --concurrency 5
-uv run starred analyze --limit 5 --concurrency 3
+uv run starred analyze --all --concurrency 3
+uv run starred status --strict
 uv run starred list --min-score 4 --description
 uv run starred digest --since 7d --min-score 4
 uv run starred search ngrok tunnel --no-archived
@@ -123,12 +128,12 @@ a shared skill read first:
 | Skill | Use it for |
 |-------|------------|
 | `starred-shared` | Read first: command inventory, SQL schema, known pitfalls, output conventions |
-| `starred-update` | Reloading the catalogue (`task update` plus the analyze catch-up loop), `refresh-stars`, Obsidian export |
+| `starred-update` | Reloading the catalogue (`task all`), `refresh-stars`, Obsidian export |
 | `starred-digest` | Summarizing a recent window (`starred digest --since`) |
 | `starred-search` | Answering "do I already have a project that does X", via `starred search` |
 
-They carry the operational knowledge the code cannot express: the implicit
-`--limit 20` on `analyze`, why `starred_at` must never be compared to
+They carry the operational knowledge the code cannot express: why `task update` can
+exit 0 with work left (use `task all`), why `starred_at` must never be compared to
 `datetime('now')` in SQL, and the four repositories the GitHub API no longer resolves.
 
 ## Do Not Commit

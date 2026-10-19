@@ -42,6 +42,18 @@ tasks:
     cmds:
       - uv run starred analyze --limit {{.LIMIT}} --concurrency {{.ANALYZE_CONCURRENCY}}
 
+  analyze:all:
+    desc: "Analyze every pending repository, no cap (usage: task analyze:all [ANALYZE_CONCURRENCY=3])"
+    vars:
+      ANALYZE_CONCURRENCY: '{{.ANALYZE_CONCURRENCY | default "3"}}'
+    cmds:
+      - uv run starred analyze --all --concurrency {{.ANALYZE_CONCURRENCY}}
+
+  status:
+    desc: "Report catalogue completeness (usage: task status [STRICT=1])"
+    cmds:
+      - uv run starred status {{if .STRICT}}--strict{{end}}
+
   digest:
     desc: "Summarize recently starred repos (usage: task digest [SINCE=24h])"
     vars:
@@ -68,6 +80,17 @@ tasks:
     desc: Scan git history for leaked secrets with gitleaks
     cmds:
       - gitleaks git --verbose
+
+  all:
+    desc: "The whole job: sync, READMEs, analyze everything pending, verify, digest"
+    vars:
+      SINCE: '{{.SINCE | default "24h"}}'
+    cmds:
+      - task: sync
+      - task: fetch-readme
+      - task: analyze:all
+      - uv run starred status --strict
+      - uv run starred digest --since {{.SINCE}}
 
   update:
     desc: Full pipeline — sync, fetch READMEs, analyze, export to Obsidian
