@@ -21,6 +21,7 @@ from .db import (
     get_repos_for_readme,
     get_repos_starred_since,
     get_repos_to_analyze,
+    get_status,
     open_db,
     search_repos,
     set_meta,
@@ -196,6 +197,13 @@ def fetch_readme_cmd(
 @main.command()
 @click.option("--limit", default=20, show_default=True, help="Number of repos to analyze per run")
 @click.option(
+    "--all",
+    "analyze_all",
+    is_flag=True,
+    default=False,
+    help="Analyze every pending repo, ignoring --limit",
+)
+@click.option(
     "--concurrency", default=3, show_default=True, help="Number of parallel Claude requests"
 )
 @click.option(
@@ -211,7 +219,9 @@ def fetch_readme_cmd(
     help="Also re-analyze repos whose analysis has no tags",
 )
 @click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
-def analyze(limit: int, concurrency: int, delay: float, force: bool, db_path: Path):
+def analyze(
+    limit: int, analyze_all: bool, concurrency: int, delay: float, force: bool, db_path: Path
+):
     """Analyze starred repositories with Claude and assign an interest score (1-5) and tags."""
     if not db_path.exists():
         console.print(
@@ -222,7 +232,7 @@ def analyze(limit: int, concurrency: int, delay: float, force: bool, db_path: Pa
     ok = failed = 0
 
     with open_db(db_path) as conn:
-        rows = get_repos_to_analyze(conn, limit, force=force)
+        rows = get_repos_to_analyze(conn, None if analyze_all else limit, force=force)
 
         if not rows:
             console.print("[green]All repositories have already been analyzed.[/green]")
@@ -349,6 +359,60 @@ def _build_digest(rows: list[sqlite3.Row], since: datetime) -> str:
             lines.append(f"  {row['url']}")
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
+
+
+@main.command()
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Exit non-zero when repos are still missing an analysis",
+)
+@click.option("--db", "db_path", default=DB_PATH, type=Path, show_default=True)
+def status(strict: bool, db_path: Path):
+    """Report how complete the catalogue is."""
+    if not db_path.exists():
+        console.print(
+            f"[red]Database not found:[/red] {db_path}. Run [bold]starred sync[/bold] first."
+        )
+        raise SystemExit(1)
+
+    with open_db(db_path) as conn:
+        counters = get_status(conn)
+
+    table = Table(show_header=False, box=None)
+    table.add_column(style="bold")
+    table.add_column(justify="right")
+    table.add_row("Repositories", f"{counters['repositories']:,}".replace(",", " "))
+    table.add_row("Analyses", f"{counters['analyses']:,}".replace(",", " "))
+    table.add_row("Archived upstream", str(counters["archived"]))
+    table.add_row("Unresolved by the API", str(counters["unresolved"]))
+    console.print(table)
+
+    pending = [
+        (label, counters[key])
+        for label, key in (
+            ("without analysis", "missing_analysis"),
+            ("without tags", "missing_tags"),
+            ("without README", "missing_readme"),
+        )
+        if counters[key]
+    ]
+    if not pending:
+        console.print("\n[green]Catalogue complete.[/green]")
+        return
+
+    for label, count in pending:
+        style = "yellow" if label == "without README" else "red"
+        console.print(f"[{style}]{count} repositories {label}[/{style}]")
+
+    # A repo with no README on GitHub stays that way: never a reason to fail.
+    blocking = counters["missing_analysis"] or counters["missing_tags"]
+    if strict and blocking:
+        console.print(
+            "\n[red]Incomplete.[/red] Run [bold]starred analyze --all[/bold] to catch up."
+        )
+        raise SystemExit(1)
 
 
 @main.command()

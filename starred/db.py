@@ -369,16 +369,15 @@ def get_repos_starred_since(
 
 
 def get_repos_to_analyze(
-    conn: sqlite3.Connection, limit: int, force: bool = False
+    conn: sqlite3.Connection, limit: int | None, force: bool = False
 ) -> list[sqlite3.Row]:
-    """Repos still lacking an analysis, those with a README first."""
+    """Repos still lacking an analysis, those with a README first. `limit=None` for all."""
     where = (
         "a.repo_id IS NULL OR NOT EXISTS (SELECT 1 FROM analysis_tags WHERE repo_id = r.id)"
         if force
         else "a.repo_id IS NULL"
     )
-    return conn.execute(
-        f"""
+    sql = f"""
         SELECT r.id, r.name_with_owner, r.description, r.primary_language,
                r.is_archived, r.pushed_at, r.stargazer_count, r.readme_path,
                GROUP_CONCAT(t.topic_name, ', ') AS topics
@@ -388,10 +387,33 @@ def get_repos_to_analyze(
         WHERE {where}
         GROUP BY r.id
         ORDER BY (r.readme_path IS NULL), r.starred_at DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+    """
+    params: tuple = ()
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (limit,)
+    return conn.execute(sql, params).fetchall()
+
+
+def get_status(conn: sqlite3.Connection) -> dict[str, int]:
+    """Counters describing how complete the catalogue is."""
+    q = lambda sql: conn.execute(sql).fetchone()[0]  # noqa: E731
+    return {
+        "repositories": q("SELECT COUNT(*) FROM repositories"),
+        "analyses": q("SELECT COUNT(*) FROM analysis"),
+        "missing_analysis": q(
+            """SELECT COUNT(*) FROM repositories r
+               LEFT JOIN analysis a ON a.repo_id = r.id
+               WHERE a.repo_id IS NULL"""
+        ),
+        "missing_readme": q("SELECT COUNT(*) FROM repositories WHERE readme_path IS NULL"),
+        "missing_tags": q(
+            """SELECT COUNT(*) FROM analysis a
+               WHERE NOT EXISTS (SELECT 1 FROM analysis_tags WHERE repo_id = a.repo_id)"""
+        ),
+        "archived": q("SELECT COUNT(*) FROM repositories WHERE is_archived = 1"),
+        "unresolved": q("SELECT COUNT(*) FROM repositories WHERE created_at IS NULL"),
+    }
 
 
 def get_last_starred_at(conn: sqlite3.Connection) -> datetime | None:
